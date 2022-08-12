@@ -1,0 +1,220 @@
+[[package]]
+name = "flake8"
+version = "5.0.4"
+description = "the modular source code checker: pep8 pyflakes and co"
+category = "dev"
+optional = false
+python-versions = ">=3.6.1"
+
+[package.dependencies]
+mccabe = ">=0.7.0,<0.8.0"
+pycodestyle = ">=2.9.0,<2.10.0"
+pyflakes = ">=2.5.0,<2.6.0"
+
+[[package]]
+name = "mccabe"
+version = "0.7.0"
+description = "McCabe checker, plugin for flake8"
+category = "dev"
+optional = false
+python-versions = ">=3.6"
+
+[[package]]
+name = "psycopg"
+version = "3.0.16"
+description = "PostgreSQL database adapter for Python"
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[package.dependencies]
+psycopg-binary = {version = "3.0.16", optional = true, markers = "extra == \"binary\""}
+tzdata = {version = "*", markers = "sys_platform == \"win32\""}
+
+[package.extras]
+test = ["pytest-randomly (>=3.10)", "pytest-cov (>=3.0)", "pytest-asyncio (>=0.16,<0.17)", "pytest (>=6.2.5)", "pproxy (>=2.7)", "mypy (>=0.920,!=0.930,!=0.931)"]
+pool = ["psycopg-pool"]
+docs = ["sphinx-autodoc-typehints (>=1.12)", "sphinx-autobuild (>=2021.3.14)", "furo (==2022.6.21)", "Sphinx (>=5.0)"]
+dev = ["wheel (>=0.37)", "types-setuptools (>=57.4)", "mypy (>=0.920,!=0.930,!=0.931)", "flake8 (>=4.0)", "dnspython (>=2.1)", "black (>=22.3.0)"]
+c = ["psycopg-c (==3.0.16)"]
+binary = ["psycopg-binary (==3.0.16)"]
+
+[[package]]
+name = "psycopg-binary"
+version = "3.0.16"
+description = "PostgreSQL database adapter for Python -- C optimisation distribution"
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[[package]]
+name = "psycopg-pool"
+version = "3.1.1"
+description = "Connection Pool for Psycopg"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[[package]]
+name = "pycodestyle"
+version = "2.9.1"
+description = "Python style guide checker"
+category = "dev"
+optional = false
+python-versions = ">=3.6"
+
+[[package]]
+name = "pyflakes"
+version = "2.5.0"
+description = "passive checker of Python programs"
+category = "dev"
+optional = false
+python-versions = ">=3.6"
+
+[[package]]
+name = "python-dotenv"
+version = "0.20.0"
+description = "Read key-value pairs from a .env file and set them as environment variables"
+category = "main"
+optional = false
+python-versions = ">=3.5"
+
+[package.extras]
+cli = ["click (>=5.0)"]
+
+[[package]]
+name = "slack-bolt"
+version = "1.14.3"
+description = "The Bolt Framework for Python"
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[package.dependencies]
+slack-sdk = ">=3.17.2,<4"
+
+[package.extras]
+adapter = ["boto3 (<=2)", "bottle (>=0.12,<1)", "chalice (>=1.26.5,<2)", "click (>=7,<8)", "CherryPy (>=18,<19)", "Django (>=3,<5)", "falcon (>=2,<4)", "fastapi (>=0.70.0,<1)", "Flask (>=1,<3)", "Werkzeug (>=2,<3)", "pyramid (>=1,<3)", "sanic (>=21,<22)", "starlette (>=0.14,<1)", "tornado (>=6,<7)", "uvicorn (<1)", "gunicorn (>=20,<21)", "websocket-client (>=1.2.3,<2)"]
+adapter_testing = ["moto (>=3,<4)", "docker (>=5,<6)", "boddle (>=0.2,<0.3)", "Flask (>=1,<2)", "Werkzeug (>=1,<2)", "sanic-testing (>=0.7)", "requests (>=2,<3)"]
+async = ["aiohttp (>=3,<4)", "websockets (>=8,<10)"]
+testing = ["pytest (>=6.2.5,<7)", "pytest-cov (>=3,<4)", "Flask-Sockets (>=0.2,<1)", "Werkzeug (>=1,<2)", "itsdangerous (==2.0.1)", "Jinja2 (==3.0.3)", "black (==22.3.0)", "click (<=8.0.4)", "pytest-asyncio (>=0.18.2,<1)", "aiohttp (>=3,<4)"]
+testing_without_asyncio = ["pytest (>=6.2.5,<7)", "pytest-cov (>=3,<4)", "Flask-Sockets (>=0.2,<1)", "Werkzeug (>=1,<2)", "itsdangerous (==2.0.1)", "Jinja2 (==3.0.3)", "black (==22.3.0)", "click (<=8.0.4)"]
+
+[[package]]
+name = "slack-sdk"
+version = "3.18.1"
+description = "The Slack API Platform SDK for Python"
+category = "main"
+optional = false
+python-versions = ">=3.6.0"
+
+[package.extras]
+optional = ["aiodns (>1.0)", "aiohttp (>=3.7.3,<4)", "boto3 (<=2)", "SQLAlchemy (>=1,<2)", "websockets (>=10,<11)", "websocket-client (>=1,<2)"]
+testing = ["pytest (>=6.2.5,<7)", "pytest-asyncio (<1)", "Flask-Sockets (>=0.2,<1)", "Flask (>=1,<2)", "Werkzeug (<2)", "itsdangerous (==1.1.0)", "Jinja2 (==3.0.3)", "pytest-cov (>=2,<3)", "codecov (>=2,<3)", "flake8 (>=4,<5)", "black (==22.3.0)", "click (==8.0.4)", "psutil (>=5,<6)", "databases (>=0.5)", "boto3 (<=2)", "moto (>=3,<4)"]
+
+[[package]]
+name = "tzdata"
+version = "2022.1"
+description = "Provider of IANA time zone data"
+category = "main"
+optional = false
+python-versions = ">=2"
+
+[metadata]
+lock-version = "1.1"
+python-versions = "^3.10"
+content-hash = "1e251799ba911dc2ad68b86f731789c42673756051113cac479b8c8aaa70021e"
+
+[metadata.files]
+flake8 = [
+    {file = "flake8-5.0.4-py2.py3-none-any.whl", hash = "sha256:7a1cf6b73744f5806ab95e526f6f0d8c01c66d7bbe349562d22dfca20610b248"},
+    {file = "flake8-5.0.4.tar.gz", hash = "sha256:6fbe320aad8d6b95cec8b8e47bc933004678dc63095be98528b7bdd2a9f510db"},
+]
+mccabe = [
+    {file = "mccabe-0.7.0-py2.py3-none-any.whl", hash = "sha256:6c2d30ab6be0e4a46919781807b4f0d834ebdd6c6e3dca0bda5a15f863427b6e"},
+    {file = "mccabe-0.7.0.tar.gz", hash = "sha256:348e0240c33b60bbdf4e523192ef919f28cb2c3d7d5c7794f74009290f236325"},
+]
+psycopg = [
+    {file = "psycopg-3.0.16-py3-none-any.whl", hash = "sha256:0f5e18920ed978f5063e48acc5ca4389225db7d06a03090d2bbb7a0ec7a640b2"},
+    {file = "psycopg-3.0.16.tar.gz", hash = "sha256:44ca63373c33957ca852fefa1940f8cc5d4c11493b7f6710b0ab250ff5abc50c"},
+]
+psycopg-binary = [
+    {file = "psycopg_binary-3.0.16-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:7fde64e986c80183968c6a0e9c9999f6f8f22549d614f0604d2a1d9a6bbaa6da"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cbf39f9b850539085ebcb7666985e21b7d1f6d573ca48a0d54420d1e1275857b"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:fd415f3a596253f0d29156fb0eed5d82689bb165abe8d2b6e7c351d97a7c2c90"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:d5a470d2efa78fead057da327591ec448f957515e161afd1e9ba36beb009da33"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:368e864257ec989abca4773cdbb4df51363ce6a48690880cabe5c586c6af01de"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-musllinux_1_1_aarch64.whl", hash = "sha256:d22980ad26f940de311708ad7194af448e2455ba4ad9e35e5888931a53a1d773"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-musllinux_1_1_i686.whl", hash = "sha256:036bb756f834c8dd627c8dbf223b158be0f61b40b2c1d36c215339ed0ce03dc6"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-musllinux_1_1_ppc64le.whl", hash = "sha256:1e2d2d814e7360d13a980ac824298144a8a438eb64c297a6de6d9c49785aa44c"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-musllinux_1_1_x86_64.whl", hash = "sha256:10eccf3e1a8960449c38f992998ebe40cca3c273c82184d6f88823a2c5dd8dc9"},
+    {file = "psycopg_binary-3.0.16-cp310-cp310-win_amd64.whl", hash = "sha256:b519948940caeb7d634cd3a94ff41282ff114cd09422bd0492ac0d1492fe9ea7"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-macosx_10_9_x86_64.whl", hash = "sha256:197b476144a30d205477d4f21aa228067a6cf882238e29349c11558c43302f94"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d90f02478b293c4df67061a813fc217ce520d95637d68e34dc870178bada80dc"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:962f8260daf2cd5f9b347e430bae024d87663260390938b0003f7dab4e5f278b"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:c99a1962751ab6a3562dd98c174702416b5e0ab4d5ead4aefca953bff9cbdfb1"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d01082476664b9a2cb2ad4a4cd2d39dacbb3b5fb99a490966b0e5217c039d950"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-musllinux_1_1_aarch64.whl", hash = "sha256:39c8bdd2566d4dda46e74b94d218881d2192c1b7b3a1a8731cc6ba953ceb28be"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-musllinux_1_1_i686.whl", hash = "sha256:31b1ade152eba6524adb9ef87fa4379644445bda13f8b6b8bb58d35134a51d1d"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-musllinux_1_1_ppc64le.whl", hash = "sha256:cf51daef3ff610909486568298b8f3aacf066864633569277b9ce0346f3b12c0"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-musllinux_1_1_x86_64.whl", hash = "sha256:62ee5a239d9e18393234e68780681397b9abf91784eefe32d11fbe968461a30b"},
+    {file = "psycopg_binary-3.0.16-cp36-cp36m-win_amd64.whl", hash = "sha256:9a8c6b2203453826322c983fb56c9507cf027907f243cba52644c7d0c085d0ca"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-macosx_10_9_x86_64.whl", hash = "sha256:df31a72be411f789aa3e563b2a2da40a4a08186ce804f65f8dc550e39c6fabfa"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:abfa7a4e8c1aca5f5f672d8c240121792f7fbd1171e6960c3f7571a342c84a68"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:8ec3f2b72d86d181bf37fc63815bb60a58ddabeee3dfe86541ddd530020bcc82"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:74910dd823d894370149251dd7d9e85f0e658f8a77177361a227e71325e11047"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2dbd38f19062006b52e01c7f804ecd3d7980cbb6ddc7fb05386a6e8e63a70de2"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-musllinux_1_1_aarch64.whl", hash = "sha256:dcb8a7772538d92cd2b5dbb7f719a5f4b7d3430c53b748aa2197f82b38e1b9e8"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-musllinux_1_1_i686.whl", hash = "sha256:2006d43ff11550b32600c1277c0572b25902c25b1d4a7d18af36f6ebab404fdb"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-musllinux_1_1_ppc64le.whl", hash = "sha256:454fd9af3450b4602e9a03b77d29db348779348b2c4df0fd3a7cd7e57cbe1795"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-musllinux_1_1_x86_64.whl", hash = "sha256:d28add63216a41251888d1fc98ad5b41a5bf12464868346db69fce55ab17c3df"},
+    {file = "psycopg_binary-3.0.16-cp37-cp37m-win_amd64.whl", hash = "sha256:80b43bf19776c5ad533b38762d644f9bd770b8248ccf2f267cdc2b0660d6fd0f"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:c572ffeb1859f77d2f38582ff46bb67e823fe40457b7fba91385235576ce3026"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e95ce9fcd5275fcbd56f96fdc48861a55db1db70faa101507ebc60a9da07eaeb"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:dfdeb1ef726c338489a92ef4fa2de2f554d7a2e7f87d006fc20b5077e2919947"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:0447a4090acbf8e0487cc90d19f9f4cdcec99efea07ba41187ccb74ab54edd61"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d4c9b161a8562d3853e589e8ade712ba3d4fab26305cb87ba6569fd94ed2c299"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-musllinux_1_1_aarch64.whl", hash = "sha256:f696276be56fcd9bb3deb38593d1049a14e88af66be77862475a861eaf4a7746"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-musllinux_1_1_i686.whl", hash = "sha256:27bef74a99ecf759a6b4b1bb5cd05d64e165c93f9812c96ae301cd843e671464"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-musllinux_1_1_ppc64le.whl", hash = "sha256:6faee3c6edaa126c7160970171781edc0879e96ff7b23aed76419048041e4f37"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-musllinux_1_1_x86_64.whl", hash = "sha256:bf61ff5dd252eba8a03d06d1e7e58fdc5a0dab2bcb5a084dd2272929892a8123"},
+    {file = "psycopg_binary-3.0.16-cp38-cp38-win_amd64.whl", hash = "sha256:ae8a9d57d3905b3ce3159a654107f90e268818ea549af6d3e2457eef43bc484a"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:e5680f44c7fb6a8c87c0ad8607e80e3f602c628fdcaa4e8a40e95bcd8ca56724"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fe674b42f8ce507fb957da5f23a85823dd60fc1a8b65d1443ec140af8772aa17"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:d012b9ec7329d5c1ea201531ba99b6ffa911bcc3d5f0eda37c0517b7b45a63dc"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:58f7ed4eb6ae62dafbb4031c2b0ab2f1ba77c91690171dd5fbc9f61c114d713a"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6cd52fa3a95ba0accc250a5283cdd4ecd118bf392b4331a59426dfb407963bc8"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-musllinux_1_1_aarch64.whl", hash = "sha256:564ab06ac2c06b373992e1d34cfbd67003808b0bc1a0e1b36abd5b192a7378ba"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-musllinux_1_1_i686.whl", hash = "sha256:e23596020ad833e1a9ecb8879eb23ed7b3675cb0e9f4ff60d7a54ca204740047"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-musllinux_1_1_ppc64le.whl", hash = "sha256:4feaa7a275643fc505d99eb546b7dd9428816978f203f10cc7af73d15bc13a26"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-musllinux_1_1_x86_64.whl", hash = "sha256:5772b09058f22ae54a6df1b1c6ce5ab2fc2cc5329f54cc97d6e2388d572f0bb6"},
+    {file = "psycopg_binary-3.0.16-cp39-cp39-win_amd64.whl", hash = "sha256:607758f36dccdb9a839bfdb2a87d6d9f93b386fc2a574f87257fc4410cd26747"},
+]
+psycopg-pool = [
+    {file = "psycopg-pool-3.1.1.tar.gz", hash = "sha256:bc579078dc8209f1ce280228460f96770756f24babb5d8ab2418800e9082a973"},
+    {file = "psycopg_pool-3.1.1-py3-none-any.whl", hash = "sha256:397beaa082f17255e6267850a00700aec4427fa214b4c55d2d49c7c154508ed5"},
+]
+pycodestyle = [
+    {file = "pycodestyle-2.9.1-py2.py3-none-any.whl", hash = "sha256:d1735fc58b418fd7c5f658d28d943854f8a849b01a5d0a1e6f3f3fdd0166804b"},
+    {file = "pycodestyle-2.9.1.tar.gz", hash = "sha256:2c9607871d58c76354b697b42f5d57e1ada7d261c261efac224b664affdc5785"},
+]
+pyflakes = [
+    {file = "pyflakes-2.5.0-py2.py3-none-any.whl", hash = "sha256:4579f67d887f804e67edb544428f264b7b24f435b263c4614f384135cea553d2"},
+    {file = "pyflakes-2.5.0.tar.gz", hash = "sha256:491feb020dca48ccc562a8c0cbe8df07ee13078df59813b83959cbdada312ea3"},
+]
+python-dotenv = [
+    {file = "python-dotenv-0.20.0.tar.gz", hash = "sha256:b7e3b04a59693c42c36f9ab1cc2acc46fa5df8c78e178fc33a8d4cd05c8d498f"},
+    {file = "python_dotenv-0.20.0-py3-none-any.whl", hash = "sha256:d92a187be61fe482e4fd675b6d52200e7be63a12b724abbf931a40ce4fa92938"},
+]
+slack-bolt = [
+    {file = "slack_bolt-1.14.3-py2.py3-none-any.whl", hash = "sha256:c99bf8bca2f9fbe21a2712ae319f0a26a86f715d54f44de61d55bd0f8c3d4d5a"},
+    {file = "slack_bolt-1.14.3.tar.gz", hash = "sha256:0be5a3f54bb5c0cbeea79d6ffc7130ddf3ca21a81bb7ba5bc3b5de2a6da56e1d"},
+]
+slack-sdk = [
+    {file = "slack_sdk-3.18.1-py2.py3-none-any.whl", hash = "sha256:63ce5e6253a31873d6c921c9feaa842a93a2f56e6e009cb7daf406f4bc4df798"},
+    {file = "slack_sdk-3.18.1.tar.gz", hash = "sha256:a25d3d2bf0bf605d54d764d4a463fe7c0659ee24c13d75653e2bec247bd5998b"},
+]
+tzdata = [
+    {file = "tzdata-2022.1-py2.py3-none-any.whl", hash = "sha256:238e70234214138ed7b4e8a0fab0e5e13872edab3be586ab8198c407620e2ab9"},
+    {file = "tzdata-2022.1.tar.gz", hash = "sha256:8b536a8ec63dc0751342b3984193a3118f8fca2afe25752bb9b7fffd398552d3"},
+]
