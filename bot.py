@@ -24,23 +24,21 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-def isNotBotId(user_id: str):
+def isNonBotId(user_id: str) -> bool:
     result = client.users_info(user=user_id)
     logger.debug(f"{result['user']['name']} is a bot ? {result['user']['is_bot']}")
-    if not result['user']['is_bot']:
-        return True
-    return False
+    return False if result['user']['is_bot'] else True
 
 
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
 def create_reminder(context, message):
     # context['matches'] creates a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
-    mentioned_users_by_id = set(context['matches'])
+    mentions_by_id = set(context['matches'])
     # Remove bot mentions just in case
-    logger.debug(f"""All mentioned users: {mentioned_users_by_id}""")
-    mentioned_users_by_id = tuple(filter(isNotBotId, mentioned_users_by_id))
-    logger.opt(colors=True).debug(f"""Mentioned <red>human</red> users: {mentioned_users_by_id}""")
+    logger.debug(f"""All mentioned users: {mentions_by_id}""")
+    mentions_by_id = tuple(filter(isNonBotId, mentions_by_id))
+    logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {mentions_by_id}")
     channel_id = message['channel']
     message_ts = message['event_ts']
     two_days_in_unix_seconds = 3600 * 24 * 2
@@ -51,7 +49,7 @@ def create_reminder(context, message):
                      mention_message(channel_id, message_ts, remind_time)
                      VALUES(%s, %s, %s)""",
                      (channel_id, message_ts, remind_time))
-        for user_id in mentioned_users_by_id:
+        for user_id in mentions_by_id:
             conn.execute("""INSERT INTO
                          mention(channel_id, message_ts, user_id)
                          VALUES(%s, %s, %s)""",
@@ -61,8 +59,8 @@ def create_reminder(context, message):
 
 @app.event("reaction_added")
 def track_reaction_for_mention_message(payload, say):
-    # Retrieve message text from data in reaction payload
-    # inclusive: oldest ts counted, oldest: only count ts after arg
+    # Retrieve message text from data (channel, ts) in reaction payload
+    # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
     try:
         result = client.conversations_history(
                                             channel=payload['item']['channel'],
@@ -84,7 +82,7 @@ def track_reaction_for_mention_message(payload, say):
     message_ts = payload['item']['ts']
     reaction = payload['reaction']
     logger.info(f"User{user_id} {reaction} {message_channel} {message_ts}")
-    
+
 
 if __name__ == "__main__":
     logger.info(f"Startup at {datetime.now()}")
