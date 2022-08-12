@@ -3,8 +3,9 @@ import re
 import psycopg_pool
 from loguru import logger
 from datetime import datetime
-from slack_bolt import App
+from slack_bolt import App, BoltResponse
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_bolt.error import BoltUnhandledRequestError
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
@@ -20,23 +21,38 @@ ps_pool = psycopg_pool.ConnectionPool(min_size=1, max_size=3,
 ps_pool.open()
 logger.info(ps_pool.get_stats())
 
-app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
+app = App(token=os.environ.get("SLACK_BOT_TOKEN"),
+          # enable @app.error handler to catch the patterns
+          raise_error_for_unhandled_request=True,)
 client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
 def isNonBotId(user_id: str) -> bool:
     result = client.users_info(user=user_id)
-    logger.debug(f"{result['user']['name']} is a bot ? {result['user']['is_bot']}")
-    return False if result['user']['is_bot'] else True
+    username = result['user']['name']
+    is_bot = result['user']['is_bot']
+    logger.debug(f"{username} is a bot? {is_bot}")
+    return True if not is_bot else False
+
+
+@app.error
+def handle_errors(error):
+    if isinstance(error, BoltUnhandledRequestError):
+        logger.info(error)
+        return BoltResponse(status=200, body="")
+    else:
+        # other error patterns
+        return BoltResponse(status=500, body="Something Wrong")
 
 
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
 def create_reminder(context, message):
+    """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] creates a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
     mentions_by_id = set(context['matches'])
     # Remove bot mentions just in case
-    logger.debug(f"""All mentioned users: {mentions_by_id}""")
+    logger.debug(f"All mentioned users: {mentions_by_id}")
     mentions_by_id = tuple(filter(isNonBotId, mentions_by_id))
     logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {mentions_by_id}")
     channel_id = message['channel']
@@ -78,10 +94,19 @@ def track_reaction_for_mention_message(payload, say):
         print(f"Error: {e}")
     logger.debug("react detected on mention mesage, begin db ops")
     user_id = payload['user']
-    message_channel = payload['item']['channel']
+    channel_id = payload['item']['channel']
     message_ts = payload['item']['ts']
     reaction = payload['reaction']
-    logger.info(f"User{user_id} {reaction} {message_channel} {message_ts}")
+    logger.info(f"User:{user_id} {reaction} {channel_id} {message_ts}")
+    with ps_pool.connection() as conn:
+        print(conn)
+        # delete from mention using channel_id, message_ts, and user_id
+        deletion = conn.execute("""DELETE FROM mention
+                        WHERE channel_id = %s
+                        AND message_ts = %s
+                        AND user_id = %s
+                        RETURNING *""", (channel_id, message_ts, user_id)).fetchone()
+        logger.debug(deletion)
 
 
 if __name__ == "__main__":
