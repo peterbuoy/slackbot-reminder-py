@@ -1,4 +1,3 @@
-from cgitb import text
 import os
 import re
 import psycopg_pool
@@ -22,6 +21,7 @@ print(ps_pool.get_stats())
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+
 
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
 def create_reminder(context, message, say):
@@ -50,10 +50,8 @@ def create_reminder(context, message, say):
 
 @app.event("reaction_added")
 def track_reaction_for_mention_message(payload, say):
-    # bail out of there is no mention in the message
-    # you can not directly access the text of the message from this event
-    # use slackapi to determine if there are mentions in the message
-    # if there are no mentions then bail out to prevent a db call
+    # Retrieve message text from data in reaction payload
+    # inclusive: oldest ts counted, oldest: only count ts after arg
     try:
         result = client.conversations_history(
                                             channel=payload['item']['channel'],
@@ -62,11 +60,14 @@ def track_reaction_for_mention_message(payload, say):
                                             limit=1
                                         )
         message = result["messages"][0]
-        # Print message text
-        print(message["text"])
+        # Print message text, check for mentions
+        match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
+        if not match:
+            print("no mention found in msg")
+            return
     except SlackApiError as e:
         print(f"Error: {e}")
-
+    print("mention found in message")
     user_id = payload['user']
     message_channel = payload['item']['channel']
     message_ts = payload['item']['ts']
@@ -78,4 +79,6 @@ def track_reaction_for_mention_message(payload, say):
 
 
 if __name__ == "__main__":
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    # Maybe consider logging?
+    print(f"Startup at {datetime.now()}")
+    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], ).start()
