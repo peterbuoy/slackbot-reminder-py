@@ -38,15 +38,22 @@ def isNonBotId(user_id: str) -> bool:
 @app.error
 def handle_errors(error):
     if isinstance(error, BoltUnhandledRequestError):
-        logger.info(error)
+        logger.info("Intentionally unhandled request:", error)
         return BoltResponse(status=200, body="")
     else:
         # other error patterns
         return BoltResponse(status=500, body="Something Wrong")
 
 
+# tracks channel messages with non-bot user mentions
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
 def create_reminder(context, message):
+    if 'subtype' in message:
+        logger.debug("Not a simple channel message: subtype exists")
+        return
+    else:
+        logger.debug("Regular channel message: subtype is None")
+
     """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] creates a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
@@ -73,6 +80,7 @@ def create_reminder(context, message):
         conn.commit()
 
 
+# listens to reactions, but only does db query if it has mentions
 @app.event("reaction_added")
 def track_reaction_for_mention_message(payload, say):
     # Retrieve message text from data (channel, ts) in reaction payload
@@ -97,16 +105,21 @@ def track_reaction_for_mention_message(payload, say):
     channel_id = payload['item']['channel']
     message_ts = payload['item']['ts']
     reaction = payload['reaction']
-    logger.info(f"User:{user_id} {reaction} {channel_id} {message_ts}")
+    logger.debug(f"user:{user_id} rxn:{reaction} chan_id:{channel_id} ts:{message_ts}")
     with ps_pool.connection() as conn:
         print(conn)
         # delete from mention using channel_id, message_ts, and user_id
-        deletion = conn.execute("""DELETE FROM mention
+        delete_query = conn.execute("""DELETE FROM mention
                         WHERE channel_id = %s
                         AND message_ts = %s
                         AND user_id = %s
-                        RETURNING *""", (channel_id, message_ts, user_id)).fetchone()
-        logger.debug(deletion)
+                        RETURNING *""", (channel_id, message_ts, user_id))
+        delete_row = delete_query.fetchone()
+        conn.commit()
+        if delete_row is None:
+            logger.debug("An unmentioned user reacted on a mention message")
+            return
+        logger.debug(f"user:{delete_row[user_id]} responded to message, {delete_row[channel_id]}::{delete_row[message_ts]}")
 
 
 if __name__ == "__main__":
