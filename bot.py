@@ -27,10 +27,14 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"),
 client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-def isNonBotId(user_id: str) -> bool:
-    result = client.users_info(user=user_id)
-    username = result['user']['name']
-    is_bot = result['user']['is_bot']
+def isValidNonBotId(user_id: str) -> bool:
+    try:
+        response = client.users_info(user=user_id)
+    except SlackApiError as e:
+        logger.warning(f"{e}\n invalid_id: {user_id}")
+        return False
+    username = response['user']['name']
+    is_bot = response['user']['is_bot']
     logger.debug(f"{username} is a bot? {is_bot}")
     return True if not is_bot else False
 
@@ -47,7 +51,7 @@ def handle_errors(error):
 
 # tracks channel messages with non-bot user mentions
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
-def create_reminder(context, message):
+def handle_user_mention_message(context, message):
     if 'subtype' in message:
         logger.debug("Not a simple channel message: subtype exists")
         return
@@ -60,7 +64,7 @@ def create_reminder(context, message):
     mentions_by_id = set(context['matches'])
     # Remove bot mentions just in case
     logger.debug(f"All mentioned users: {mentions_by_id}")
-    mentions_by_id = tuple(filter(isNonBotId, mentions_by_id))
+    mentions_by_id = tuple(filter(isValidNonBotId, mentions_by_id))
     logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {mentions_by_id}")
     channel_id = message['channel']
     message_ts = message['event_ts']
@@ -82,7 +86,7 @@ def create_reminder(context, message):
 
 # listens to reactions, but only does db query if it has mentions
 @app.event("reaction_added")
-def track_reaction_for_mention_message(payload, say):
+def handle_reaction_for_mention_message(payload):
     # Retrieve message text from data (channel, ts) in reaction payload
     # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
     try:
@@ -108,18 +112,20 @@ def track_reaction_for_mention_message(payload, say):
     logger.debug(f"user:{user_id} rxn:{reaction} chan_id:{channel_id} ts:{message_ts}")
     with ps_pool.connection() as conn:
         print(conn)
+        logger.info(ps_pool.get_stats())
+
         # delete from mention using channel_id, message_ts, and user_id
         delete_query = conn.execute("""DELETE FROM mention
                         WHERE channel_id = %s
                         AND message_ts = %s
                         AND user_id = %s
                         RETURNING *""", (channel_id, message_ts, user_id))
-        delete_row = delete_query.fetchone()
         conn.commit()
+        delete_row = delete_query.fetchone()
         if delete_row is None:
             logger.debug("An unmentioned user reacted on a mention message")
             return
-        logger.debug(f"user:{delete_row[user_id]} responded to message, {delete_row[channel_id]}::{delete_row[message_ts]}")
+        logger.debug(f"user:{delete_row[2]} responded to message:{delete_row[1]} in channel:{delete_row[0]}")
 
 
 if __name__ == "__main__":
