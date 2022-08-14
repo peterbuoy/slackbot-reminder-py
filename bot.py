@@ -42,10 +42,11 @@ def isValidNonBotId(user_id: str) -> bool:
 @app.error
 def handle_errors(error):
     if isinstance(error, BoltUnhandledRequestError):
-        logger.info("Intentionally unhandled request:", error)
+        logger.info(f"Intentionally unhandled request: {error}")
         return BoltResponse(status=200, body="")
     else:
         # other error patterns
+        logger.debug(error)
         return BoltResponse(status=500, body="Something Wrong")
 
 
@@ -61,11 +62,11 @@ def handle_user_mention_message(context, message):
     """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] creates a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
-    mentions_by_id = set(context['matches'])
+    raw_mentions_by_id = set(context['matches'])
     # Remove bot mentions just in case
-    logger.debug(f"All mentioned users: {mentions_by_id}")
-    mentions_by_id = tuple(filter(isValidNonBotId, mentions_by_id))
-    logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {mentions_by_id}")
+    logger.debug(f"All mentioned users: {raw_mentions_by_id}")
+    user_mentions_by_id = tuple(filter(isValidNonBotId, raw_mentions_by_id))
+    logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
     channel_id = message['channel']
     message_ts = message['event_ts']
     two_days_in_unix_seconds = 3600 * 24 * 2
@@ -76,7 +77,7 @@ def handle_user_mention_message(context, message):
                      mention_message(channel_id, message_ts, remind_time)
                      VALUES(%s, %s, %s)""",
                      (channel_id, message_ts, remind_time))
-        for user_id in mentions_by_id:
+        for user_id in user_mentions_by_id:
             conn.execute("""INSERT INTO
                          mention(channel_id, message_ts, user_id)
                          VALUES(%s, %s, %s)""",
@@ -97,7 +98,7 @@ def handle_reaction_for_mention_message(payload):
                                             limit=1
                                         )
         message = result["messages"][0]
-        # Print message text, check for mentions
+        # Only do db ops if there are mentions in the reaction message
         match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
         if not match:
             logger.debug("react detected on non-mention msg, bail out event")
@@ -127,7 +128,7 @@ def handle_reaction_for_mention_message(payload):
             return
         logger.debug(f"user:{delete_row[2]} responded to message:{delete_row[1]} in channel:{delete_row[0]}")
 
-
+ 
 if __name__ == "__main__":
     logger.info(f"Startup at {datetime.now()}")
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], ).start()
