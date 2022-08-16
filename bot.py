@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import psycopg_pool
 from loguru import logger
 from datetime import datetime
@@ -27,7 +28,7 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"),
 client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-def isValidNonBotId(user_id: str) -> bool:
+def is_valid_non_bot_id(user_id: str) -> bool:
     try:
         response = client.users_info(user=user_id)
     except SlackApiError as e:
@@ -37,6 +38,47 @@ def isValidNonBotId(user_id: str) -> bool:
     is_bot = response['user']['is_bot']
     logger.debug(f"{username} is a bot? {is_bot}")
     return True if not is_bot else False
+
+
+def only_simple_channel_message(message) -> bool:
+    # this coincidentally also ignores bot messages
+    if 'subtype' in message:
+        logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
+        return False
+    else:
+        logger.debug("Simple channel message: subtype is None")
+        return True
+
+
+def check_reminders():
+    reminder_check_scheduler()
+    with ps_pool.connection() as conn:
+        conn.execute("""DELETE FROM mention_message
+                        WHERE nonresponder_ids = '{}'""")
+        reminder_messages = conn.execute("""DELETE FROM mention_message
+                                            WHERE NOW() > remind_time
+                                            RETURNING *""").fetchall()
+        logger.debug(reminder_messages)
+        for reminder in reminder_messages:
+            channel_id = reminder[0]
+            nonresponder_ids = reminder[3]
+            message = ' '.join([f"<@{id}>" for id in nonresponder_ids])
+            # consider switching to asyncio and adding sleeps to prevent rate limiting
+            try:
+                result = client.chat_postMessage(
+                    channel=channel_id,
+                    text=f"{message}\n This is a reminder that a message has not been reacted to in the past 2 days."
+                )
+                logger.info(result)
+            except SlackApiError as err:
+                logger.error(f"Error posting message: {err}")
+            finally:
+                conn.commit()
+
+
+def reminder_check_scheduler():
+    timer = threading.Timer(300.0, check_reminders)
+    timer.start()
 
 
 @app.error
@@ -51,41 +93,33 @@ def handle_errors(error):
 
 
 # tracks channel messages with non-bot user mentions
-@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
+@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[only_simple_channel_message])
 def handle_user_mention_message(context, message):
-    if 'subtype' in message:
-        logger.debug("Not a simple channel message: subtype exists")
-        return
-    else:
-        logger.debug("Regular channel message: subtype is None")
-
     """Will likely need a switch here to handle an announcement in #general"""
-    # context['matches'] creates a tuple with captured User IDs.
+    # context['matches'] is a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
     raw_mentions_by_id = set(context['matches'])
     # Remove bot mentions just in case
     logger.debug(f"All mentioned users: {raw_mentions_by_id}")
-    user_mentions_by_id = tuple(filter(isValidNonBotId, raw_mentions_by_id))
+    # This must be a list so psycopg can adapt it to a postgres array value
+    user_mentions_by_id = list(filter(is_valid_non_bot_id, raw_mentions_by_id))
+    # user_mentions_by_id.append("LOLOOL")
     logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
     channel_id = message['channel']
     message_ts = message['event_ts']
     two_days_in_unix_seconds = 3600 * 24 * 2
+    logger.debug(f"{message_ts}, {int(float(message_ts))}")
     remind_time = int(float(message_ts)) + two_days_in_unix_seconds
     remind_time = datetime.utcfromtimestamp(remind_time)
     with ps_pool.connection() as conn:
         conn.execute("""INSERT INTO
-                     mention_message(channel_id, message_ts, remind_time)
-                     VALUES(%s, %s, %s)""",
-                     (channel_id, message_ts, remind_time))
-        for user_id in user_mentions_by_id:
-            conn.execute("""INSERT INTO
-                         mention(channel_id, message_ts, user_id)
-                         VALUES(%s, %s, %s)""",
-                         (channel_id, message_ts, user_id))
+                     mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
+                     VALUES(%s, %s, %s, %s)""",
+                     (channel_id, message_ts, remind_time, user_mentions_by_id, ))
         conn.commit()
 
 
-# listens to reactions, but only does db query if it has mentions
+# listens to reactions, but only does db ops if associated message has mentions
 @app.event("reaction_added")
 def handle_reaction_for_mention_message(payload):
     # Retrieve message text from data (channel, ts) in reaction payload
@@ -98,37 +132,24 @@ def handle_reaction_for_mention_message(payload):
                                             limit=1
                                         )
         message = result["messages"][0]
-        # Only do db ops if there are mentions in the reaction message
         match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
         if not match:
-            logger.debug("react detected on non-mention msg, bail out event")
+            logger.debug("reaction detected on non-mention msg, ignoring reaction")
             return
-    except SlackApiError as e:
-        print(f"Error: {e}")
-    logger.debug("react detected on mention mesage, begin db ops")
+    except SlackApiError as err:
+        logger.error(f"Error fetching message associated with reaction: {err}")
     user_id = payload['user']
     channel_id = payload['item']['channel']
     message_ts = payload['item']['ts']
     reaction = payload['reaction']
-    logger.debug(f"user:{user_id} rxn:{reaction} chan_id:{channel_id} ts:{message_ts}")
+    logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
     with ps_pool.connection() as conn:
-        print(conn)
-        logger.info(ps_pool.get_stats())
-
-        # delete from mention using channel_id, message_ts, and user_id
-        delete_query = conn.execute("""DELETE FROM mention
-                        WHERE channel_id = %s
-                        AND message_ts = %s
-                        AND user_id = %s
-                        RETURNING *""", (channel_id, message_ts, user_id))
+        conn.execute("""UPDATE mention_message
+                        SET nonresponder_ids = array_remove(nonresponder_ids, %s)""", (user_id, ))
         conn.commit()
-        delete_row = delete_query.fetchone()
-        if delete_row is None:
-            logger.debug("An unmentioned user reacted on a mention message")
-            return
-        logger.debug(f"user:{delete_row[2]} responded to message:{delete_row[1]} in channel:{delete_row[0]}")
 
- 
+
 if __name__ == "__main__":
     logger.info(f"Startup at {datetime.now()}")
+    reminder_check_scheduler()
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], ).start()
