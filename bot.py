@@ -53,7 +53,7 @@ def only_simple_channel_message(message) -> bool:
 
 
 async def check_reminders():
-    await asyncio.sleep(10)
+    await asyncio.sleep(60*10)
     asyncio.get_running_loop().create_task(check_reminders())
     logger.debug(f"Starting async function: {sys._getframe().f_code.co_name}")
     with ps_pool.connection() as conn:
@@ -67,8 +67,9 @@ async def check_reminders():
             channel_id = reminder[0]
             nonresponder_ids = reminder[3]
             message = ' '.join([f"<@{id}>" for id in nonresponder_ids])
-            # consider switching to asyncio and adding sleeps to prevent rate limiting
             try:
+                # prevent rate limiting for postMessage
+                asyncio.sleep(1)
                 result = client.chat_postMessage(
                     channel=channel_id,
                     text=f"{message}\n This is a reminder that a message has not been reacted to in the past 2 days."
