@@ -1,13 +1,15 @@
 import os
+import asyncio
 import re
-import threading
+import sys
 import psycopg_pool
 from loguru import logger
 from datetime import datetime
-from slack_bolt import App, BoltResponse
-from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_bolt import BoltResponse
+from slack_bolt.async_app import AsyncApp
+from slack_bolt.adapter.socket_mode.aiohttp import SocketModeHandler
 from slack_bolt.error import BoltUnhandledRequestError
-from slack_sdk import WebClient
+from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
 load_dotenv()
@@ -22,13 +24,13 @@ ps_pool = psycopg_pool.ConnectionPool(min_size=1, max_size=3,
 ps_pool.open()
 logger.info(ps_pool.get_stats())
 
-app = App(token=os.environ.get("SLACK_BOT_TOKEN"),
-          # enable @app.error handler to catch the patterns
-          raise_error_for_unhandled_request=True,)
-client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"),
+               # enable @app.error handler to catch the patterns
+               raise_error_for_unhandled_request=True,)
+client = AsyncWebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-def is_valid_non_bot_id(user_id: str) -> bool:
+def is_valid_non_bot_id(user_id: str, client: AsyncWebClient) -> bool:
     try:
         response = client.users_info(user=user_id)
     except SlackApiError as e:
@@ -50,8 +52,10 @@ def only_simple_channel_message(message) -> bool:
         return True
 
 
-def check_reminders():
-    reminder_check_scheduler()
+async def check_reminders():
+    await asyncio.sleep(10)
+    asyncio.get_running_loop().create_task(check_reminders())
+    logger.debug(f"Starting async function: {sys._getframe().f_code.co_name}")
     with ps_pool.connection() as conn:
         conn.execute("""DELETE FROM mention_message
                         WHERE nonresponder_ids = '{}'""")
@@ -74,15 +78,11 @@ def check_reminders():
                 logger.error(f"Error posting message: {err}")
             finally:
                 conn.commit()
-
-
-def reminder_check_scheduler():
-    timer = threading.Timer(300.0, check_reminders)
-    timer.start()
+    logger.debug(f"Exiting async function: {sys._getframe().f_code.co_name}")
 
 
 @app.error
-def handle_errors(error):
+async def handle_errors(error):
     if isinstance(error, BoltUnhandledRequestError):
         logger.info(f"Intentionally unhandled request: {error}")
         return BoltResponse(status=200, body="")
@@ -94,7 +94,7 @@ def handle_errors(error):
 
 # tracks channel messages with non-bot user mentions
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[only_simple_channel_message])
-def handle_user_mention_message(context, message):
+async def handle_user_mention_message(context, message):
     """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] is a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
@@ -121,7 +121,7 @@ def handle_user_mention_message(context, message):
 
 # listens to reactions, but only does db ops if associated message has mentions
 @app.event("reaction_added")
-def handle_reaction_for_mention_message(payload):
+async def handle_reaction_for_mention_message(payload):
     # Retrieve message text from data (channel, ts) in reaction payload
     # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
     try:
@@ -149,7 +149,14 @@ def handle_reaction_for_mention_message(payload):
         conn.commit()
 
 
-if __name__ == "__main__":
+async def main():
     logger.info(f"Startup at {datetime.now()}")
-    reminder_check_scheduler()
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], ).start()
+    try:
+        asyncio.get_running_loop().create_task(check_reminders())
+    except RuntimeError as e:
+        logger.critical(e)
+    await SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], ).start_async()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
