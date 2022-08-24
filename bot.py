@@ -1,13 +1,12 @@
 import os
-import asyncio
 import re
-import sys
+import asyncio
 import psycopg_pool
 from loguru import logger
 from datetime import datetime
 from slack_bolt import BoltResponse
 from slack_bolt.async_app import AsyncApp
-from slack_bolt.adapter.socket_mode.aiohttp import SocketModeHandler
+from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.error import BoltUnhandledRequestError
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.errors import SlackApiError
@@ -30,9 +29,9 @@ app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"),
 client = AsyncWebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-def is_valid_non_bot_id(user_id: str, client: AsyncWebClient) -> bool:
+async def is_valid_non_bot_id(user_id: str) -> bool:
     try:
-        response = client.users_info(user=user_id)
+        response = await client.users_info(user=user_id)
     except SlackApiError as e:
         logger.warning(f"{e}\n invalid_id: {user_id}")
         return False
@@ -42,7 +41,7 @@ def is_valid_non_bot_id(user_id: str, client: AsyncWebClient) -> bool:
     return True if not is_bot else False
 
 
-def only_simple_channel_message(message) -> bool:
+async def only_simple_channel_message(message) -> bool:
     # this coincidentally also ignores bot messages
     if 'subtype' in message:
         logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
@@ -52,10 +51,17 @@ def only_simple_channel_message(message) -> bool:
         return True
 
 
+async def async_filter(async_pred, iterable):
+    for item in iterable:
+        should_yield = await async_pred(item)
+        if should_yield:
+            yield item
+
+
 async def check_reminders():
     await asyncio.sleep(60*10)
     asyncio.get_running_loop().create_task(check_reminders())
-    logger.debug(f"Starting async function: {sys._getframe().f_code.co_name}")
+    logger.debug("Starting async reminder function")
     with ps_pool.connection() as conn:
         conn.execute("""DELETE FROM mention_message
                         WHERE nonresponder_ids = '{}'""")
@@ -79,7 +85,7 @@ async def check_reminders():
                 logger.error(f"Error posting message: {err}")
             finally:
                 conn.commit()
-    logger.debug(f"Exiting async function: {sys._getframe().f_code.co_name}")
+    logger.debug("Exiting async reminder function")
 
 
 @app.error
@@ -94,7 +100,8 @@ async def handle_errors(error):
 
 
 # tracks channel messages with non-bot user mentions
-@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[only_simple_channel_message])
+# matchers=[only_simple_channel_message]
+@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
 async def handle_user_mention_message(context, message):
     """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] is a tuple with captured User IDs.
@@ -103,13 +110,13 @@ async def handle_user_mention_message(context, message):
     # Remove bot mentions just in case
     logger.debug(f"All mentioned users: {raw_mentions_by_id}")
     # This must be a list so psycopg can adapt it to a postgres array value
-    user_mentions_by_id = list(filter(is_valid_non_bot_id, raw_mentions_by_id))
+    user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
     # user_mentions_by_id.append("LOLOOL")
     logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
     channel_id = message['channel']
     message_ts = message['event_ts']
     two_days_in_unix_seconds = 3600 * 24 * 2
-    logger.debug(f"{message_ts}, {int(float(message_ts))}")
+    logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
     remind_time = int(float(message_ts)) + two_days_in_unix_seconds
     remind_time = datetime.utcfromtimestamp(remind_time)
     with ps_pool.connection() as conn:
@@ -126,7 +133,7 @@ async def handle_reaction_for_mention_message(payload):
     # Retrieve message text from data (channel, ts) in reaction payload
     # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
     try:
-        result = client.conversations_history(
+        result = await client.conversations_history(
                                             channel=payload['item']['channel'],
                                             inclusive=True,
                                             oldest=payload['item']['ts'],
@@ -153,11 +160,29 @@ async def handle_reaction_for_mention_message(payload):
 async def main():
     logger.info(f"Startup at {datetime.now()}")
     try:
-        asyncio.get_running_loop().create_task(check_reminders())
+        loop = asyncio.get_running_loop()
+        loop.create_task(check_reminders())
     except RuntimeError as e:
         logger.critical(e)
-    await SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], ).start_async()
+    logger.debug("created check reminder task")
+    handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
+    logger.debug("starting async socket")
+    handlers.append(handler)
+    await handler.start_async()
+    logger.debug('after connect sleep')
+    logger.debug(handlers)
+
+
+async def shutdown_handlers(handlers: AsyncSocketModeHandler):
+    for handler in handlers:
+        await handler.close_async()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    handlers = []
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.warning("Keyboard interrupt detected. Attempting to gracefully shutdown.")
+        asyncio.run(shutdown_handlers(handlers))
+        logger.warning("probably shutdown handlers properly")
