@@ -38,7 +38,7 @@ async def main():
     try:
         # event loop is started in in if __name__ == "__main__"
         loop = asyncio.get_running_loop()
-        loop.create_task(check_reminders())
+        loop.create_task(infinitely_call(check_reminders))
     except RuntimeError as e:
         logger.critical(e)
     logger.debug("created check reminder task")
@@ -46,8 +46,11 @@ async def main():
     socket_mode_handlers.append(handler)
     logger.debug(f"Successfully created async socket mode handler: {handler}")
     await handler.start_async()
-    logger.debug('after connect sleep')
-    logger.debug(socket_mode_handlers)
+
+
+async def infinitely_call(coro_func):
+    while True:
+        await coro_func()
 
 
 async def is_valid_non_bot_id(user_id: str) -> bool:
@@ -62,8 +65,8 @@ async def is_valid_non_bot_id(user_id: str) -> bool:
     return True if not is_bot else False
 
 
-async def only_simple_channel_message(message) -> bool:
-    # this coincidentally also ignores bot messages
+async def is_simple_non_bot_channel_message(message) -> bool:
+    # this coincidentally also ignores integration bot messages
     if 'subtype' in message:
         logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
         return False
@@ -79,9 +82,14 @@ async def async_filter(async_pred, iterable):
             yield item
 
 
-async def check_reminders():
-    await asyncio.sleep(60*10)
-    asyncio.get_running_loop().create_task(check_reminders())
+async def check_reminders(use_delay: bool = True):
+    """
+    Warning: changing default value can cause infinite loop\n
+    Args:
+        use_delay (bool): set to False to immediately call (without sleep)
+    """
+    seconds_to_sleep: float = (60 * 10 if use_delay else 0)
+    await asyncio.sleep(seconds_to_sleep)
     logger.debug("Starting async reminder function")
     with ps_pool.connection() as conn:
         conn.execute("""DELETE FROM mention_message
@@ -121,8 +129,7 @@ async def handle_errors(error):
 
 
 # tracks channel messages with non-bot user mentions
-# matchers=[only_simple_channel_message]
-@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'))
+@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[is_simple_non_bot_channel_message])
 async def handle_user_mention_message(context, message):
     """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] is a tuple with captured User IDs.
