@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 import psycopg_pool
+import configparser
 from loguru import logger
 from datetime import datetime
 from typing import List
@@ -14,7 +15,8 @@ from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
 load_dotenv()
 
-
+config = configparser.ConfigParser()
+config.read('app_config.ini')
 conn_info = f"""user={os.environ.get("DB_USER")}
                 dbname={os.environ.get("DB_NAME")}
                 password={os.environ.get("DB_PASSWORD")}
@@ -120,12 +122,31 @@ async def check_reminders(use_delay: bool = True):
 @app.error
 async def handle_errors(error):
     if isinstance(error, BoltUnhandledRequestError):
-        logger.info(f"Intentionally unhandled request: {error}")
         return BoltResponse(status=200, body="")
     else:
         # other error patterns
         logger.debug(error)
         return BoltResponse(status=500, body="Something Wrong")
+
+
+async def is_message_in_general(message):
+    # pls set this with a config
+    return True if message['channel'] == config['Dev']['channel_id_general'] else False
+
+
+async def is_message_author_boss(message):
+    return True if message['user'] == config['Dev']['user_id_boss'] else False
+
+
+@app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
+async def handle_boss_general_channel_mention(say):
+    await say("boss used channel mention in general!")
+    # TODO: Implement channel announcement tracking
+    # add channel announcement to database
+    # track people who react on message
+    # after some amount of time, get list of users who need to respond
+    # get nonresponders by diffing db and people in channel
+    # send nonresponders a dm
 
 
 # tracks channel messages with non-bot user mentions
