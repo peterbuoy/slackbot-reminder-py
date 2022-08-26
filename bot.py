@@ -4,6 +4,7 @@ import asyncio
 import psycopg_pool
 from loguru import logger
 from datetime import datetime
+from typing import List
 from slack_bolt import BoltResponse
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
@@ -13,13 +14,13 @@ from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
 load_dotenv()
 
-ps_pool = psycopg_pool.ConnectionPool(min_size=1, max_size=3,
-                                      conninfo=f"""user={os.environ.get("DB_USER")}
-                                      dbname={os.environ.get("DB_NAME")}
-                                      password={os.environ.get("DB_PASSWORD")}
-                                      host={os.environ.get("DB_HOST")}
-                                      port={os.environ.get("DB_PORT")}
-                                      dbname={os.environ.get("DB_NAME")}""")
+
+conn_info = f"""user={os.environ.get("DB_USER")}
+                dbname={os.environ.get("DB_NAME")}
+                password={os.environ.get("DB_PASSWORD")}
+                host={os.environ.get("DB_HOST")}
+                port={os.environ.get("DB_PORT")}"""
+ps_pool = psycopg_pool.ConnectionPool(min_size=1, max_size=3, conninfo=conn_info)
 ps_pool.open()
 logger.info(ps_pool.get_stats())
 
@@ -27,6 +28,26 @@ app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"),
                # enable @app.error handler to catch the patterns
                raise_error_for_unhandled_request=True,)
 client = AsyncWebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+# Contains socket mode handlers that get closed on keyboard interrupt
+# Manually must add to this list whenever you make a socket mode handler
+socket_mode_handlers = []
+
+
+async def main():
+    logger.info(f"Startup at {datetime.now()}")
+    try:
+        # event loop is started in in if __name__ == "__main__"
+        loop = asyncio.get_running_loop()
+        loop.create_task(check_reminders())
+    except RuntimeError as e:
+        logger.critical(e)
+    logger.debug("created check reminder task")
+    handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
+    socket_mode_handlers.append(handler)
+    logger.debug(f"Successfully created async socket mode handler: {handler}")
+    await handler.start_async()
+    logger.debug('after connect sleep')
+    logger.debug(socket_mode_handlers)
 
 
 async def is_valid_non_bot_id(user_id: str) -> bool:
@@ -157,32 +178,27 @@ async def handle_reaction_for_mention_message(payload):
         conn.commit()
 
 
-async def main():
-    logger.info(f"Startup at {datetime.now()}")
+async def safe_shutdown(handlers: List[AsyncSocketModeHandler], ps_conn_pool: psycopg_pool.ConnectionPool):
+    logger.debug("Initiating graceful shutdown.")
+    await shutdown_handlers(handlers)
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(check_reminders())
-    except RuntimeError as e:
-        logger.critical(e)
-    logger.debug("created check reminder task")
-    handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
-    logger.debug("starting async socket")
-    handlers.append(handler)
-    await handler.start_async()
-    logger.debug('after connect sleep')
-    logger.debug(handlers)
+        ps_conn_pool.close()
+    except psycopg_pool.errors as errs:
+        logger.error(f"Error closing postgres connection pool connection. {errs}")
+    logger.debug("Postgres connection pool closed.")
+    logger.debug("Graceful shutdown process ended.")
 
 
-async def shutdown_handlers(handlers: AsyncSocketModeHandler):
+async def shutdown_handlers(handlers: List[AsyncSocketModeHandler]):
     for handler in handlers:
         await handler.close_async()
+        logger.debug(f"{handler} shutting down")
+    logger.debug("Initialized async handlers shut down.")
 
 
 if __name__ == "__main__":
-    handlers = []
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.warning("Keyboard interrupt detected. Attempting to gracefully shutdown.")
-        asyncio.run(shutdown_handlers(handlers))
-        logger.warning("probably shutdown handlers properly")
+        asyncio.run(safe_shutdown(socket_mode_handlers, ps_pool))
