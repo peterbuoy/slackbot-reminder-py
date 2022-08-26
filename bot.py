@@ -30,20 +30,20 @@ app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"),
                # enable @app.error handler to catch the patterns
                raise_error_for_unhandled_request=True,)
 client = AsyncWebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
-# Contains socket mode handlers that get closed on keyboard interrupt
-# Manually must add to this list whenever you make a socket mode handler
-socket_mode_handlers = []
 
 
 async def main():
-    logger.info(f"Startup at {datetime.now()}")
+    logger.info(f"Startup at {datetime.utcnow()} UTC")
     try:
-        # event loop is started in in if __name__ == "__main__"
+        # event loop is started in if __name__ == "__main__"
         loop = asyncio.get_running_loop()
         loop.create_task(infinitely_call(check_reminders))
     except RuntimeError as e:
         logger.critical(e)
     logger.debug("created check reminder task")
+
+    global socket_mode_handlers
+    socket_mode_handlers = []
     handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
     socket_mode_handlers.append(handler)
     logger.debug(f"Successfully created async socket mode handler: {handler}")
@@ -51,11 +51,13 @@ async def main():
 
 
 async def infinitely_call(coro_func):
+    """Dangerously call a coroutine infinitely. Make sure the coroutine has a sleep!"""
     while True:
         await coro_func()
 
 
 async def is_valid_non_bot_id(user_id: str) -> bool:
+    """Hits the Slack API with a user id to determine if it valid and non-bot."""
     try:
         response = await client.users_info(user=user_id)
     except SlackApiError as e:
@@ -68,6 +70,7 @@ async def is_valid_non_bot_id(user_id: str) -> bool:
 
 
 async def is_simple_non_bot_channel_message(message) -> bool:
+    """Returns True if the message is just a simple channel message."""
     # this coincidentally also ignores integration bot messages
     if 'subtype' in message:
         logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
@@ -152,7 +155,6 @@ async def handle_boss_general_channel_mention(say):
 # tracks channel messages with non-bot user mentions
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[is_simple_non_bot_channel_message])
 async def handle_user_mention_message(context, message):
-    """Will likely need a switch here to handle an announcement in #general"""
     # context['matches'] is a tuple with captured User IDs.
     # Transform tuple to set to remove potential duplicate User IDs
     raw_mentions_by_id = set(context['matches'])
@@ -160,7 +162,6 @@ async def handle_user_mention_message(context, message):
     logger.debug(f"All mentioned users: {raw_mentions_by_id}")
     # This must be a list so psycopg can adapt it to a postgres array value
     user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
-    # user_mentions_by_id.append("LOLOOL")
     logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
     channel_id = message['channel']
     message_ts = message['event_ts']
