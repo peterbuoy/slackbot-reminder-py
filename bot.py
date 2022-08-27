@@ -22,10 +22,9 @@ conn_info = f"""user={os.environ.get("DB_USER")}
                 password={os.environ.get("DB_PASSWORD")}
                 host={os.environ.get("DB_HOST")}
                 port={os.environ.get("DB_PORT")}"""
-ps_pool = psycopg_pool.AsyncConnectionPool(min_size=1, max_size=3, conninfo=conn_info)
-ps_pool.open()
-logger.info(ps_pool.get_stats())
 
+pg_pool = psycopg_pool.ConnectionPool(min_size=1, max_size=3, conninfo=conn_info)
+pg_pool.open()
 app = AsyncApp(token=os.environ.get("SLACK_BOT_TOKEN"),
                # enable @app.error handler to catch the patterns
                raise_error_for_unhandled_request=True,)
@@ -35,20 +34,16 @@ client = AsyncWebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
 async def main():
     logger.info(f"Startup at {datetime.utcnow()} UTC")
     try:
-        # event loop is started in if __name__ == "__main__"
+        global socket_mode_handlers
+        socket_mode_handlers = []
+        handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
+        socket_mode_handlers.append(handler)
         loop = asyncio.get_running_loop()
         loop.create_task(infinitely_call(check_mention_reminders))
         loop.create_task(infinitely_call(check_announcement_reminders))
+        await handler.start_async()
     except RuntimeError as e:
         logger.critical(e)
-    logger.debug("created check reminder task")
-
-    global socket_mode_handlers
-    socket_mode_handlers = []
-    handler = await AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
-    socket_mode_handlers.append(handler)
-    logger.debug(f"Successfully created async socket mode handler: {handler}")
-    await handler.start_async()
 
 
 async def infinitely_call(coro_func):
@@ -88,7 +83,7 @@ async def async_filter(async_pred, iterable):
             yield item
 
 
-async def check_mention_reminders(use_delay: bool = True):
+async def check_mention_reminders(use_delay: bool = True) -> None:
     """
     Warning: changing default value can cause infinite loop\n
     Args:
@@ -97,10 +92,10 @@ async def check_mention_reminders(use_delay: bool = True):
     seconds_to_sleep: float = (60 * 10 if use_delay else 0)
     await asyncio.sleep(seconds_to_sleep)
     logger.debug("Starting async mention checking function")
-    async with ps_pool.connection() as conn:
-        await conn.execute("""DELETE FROM mention_message
+    with pg_pool.connection() as conn:
+        conn.execute("""DELETE FROM mention_message
                         WHERE nonresponder_ids = '{}'""")
-        reminder_messages = await conn.execute("""DELETE FROM mention_message
+        reminder_messages = conn.execute("""DELETE FROM mention_message
                                             WHERE NOW() > remind_time
                                             RETURNING *""").fetchall()
         logger.debug(reminder_messages)
@@ -123,40 +118,37 @@ async def check_mention_reminders(use_delay: bool = True):
     logger.debug("Exiting async reminder function")
 
 
-async def check_announcement_reminders():
-    seconds_to_sleep: float = (10)
+async def check_announcement_reminders() -> None:
+    seconds_to_sleep: float = 60 * 20
     await asyncio.sleep(seconds_to_sleep)
     logger.debug("Starting async announcement checking function.")
-    async with ps_pool.connection() as conn:
-        responder_ids = await conn.execute("""DELETE FROM announcement_message
-                                     WHERE NOW() > remind_time
-                                    RETURNING responder_ids""").fetchall()
-    users_store = {}
+    with pg_pool.connection() as conn:
+        query = """DELETE FROM announcement_message
+                WHERE NOW() > remind_time
+                RETURNING responder_ids"""
+        responder_ids = conn.execute(query)
 
-    def save_non_bot_users(users_array):
+    def save_non_bot_users(users_array) -> dict:
+        users_store = {}
         for user in users_array:
-            # Key user info on their unique user ID
             if user["is_bot"] is True or user["id"] == 'USLACKBOT':
                 continue
             user_id = user["id"]
-            # Store the entire user object (you may not need all of the info)
             users_store[user_id] = user
+        return users_store
     try:
         result = await client.users_list()
-        save_non_bot_users(result["members"])
+        non_bot_users_store = save_non_bot_users(result["members"])
     except SlackApiError as e:
         logger.error("Error creating conversation: {}".format(e))
-        # Put users into the dict
-
-    nonresponder_ids = [id for id in users_store if id not in responder_ids]
+    nonresponder_ids = [id for id in non_bot_users_store if id not in responder_ids]
     for nonresponder_id in nonresponder_ids:
         await asyncio.sleep(2)
         try:
             result = await client.chat_postMessage(
                 channel=nonresponder_id,
-                text="Ayo watup rsvp in general chan pls"
+                text="Please remember to react to announcements in general."
             )
-            logger.info(result)
         except SlackApiError as e:
             logger.error(f"Error posting message: {e}")
 
@@ -188,22 +180,20 @@ async def handle_boss_general_channel_mention(message, say):
     responder_ids = [config['Dev']['user_id_boss']]
     remind_time = int(float(message_ts)) + announcement_delay_seconds
     remind_time = datetime.utcfromtimestamp(remind_time)
-    async with ps_pool.connection() as conn:
+    with pg_pool.connection() as conn:
         query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
-                    VALUES(%s, %s, %s, %s)"""
-        await conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
+                VALUES(%s, %s, %s, %s)"""
+        conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
     await say("boss used channel mention in general!")
 
 
 # tracks channel messages with non-bot user mentions
 @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[is_simple_non_bot_channel_message])
 async def handle_user_mention_message(context, message):
-    # context['matches'] is a tuple with captured User IDs.
-    # Transform tuple to set to remove potential duplicate User IDs
+    # context['matches'] is a tuple with captured User IDs via regex
     raw_mentions_by_id = set(context['matches'])
-    # Remove bot mentions just in case
     logger.debug(f"All mentioned users: {raw_mentions_by_id}")
-    # This must be a list so psycopg can adapt it to a postgres array value
+    # Remove bot mentions. Return list so psycopg can adapt it to a postgres array value
     user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
     logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
     channel_id = message['channel']
@@ -212,15 +202,13 @@ async def handle_user_mention_message(context, message):
     logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
     remind_time = int(float(message_ts)) + two_days_in_unix_seconds
     remind_time = datetime.utcfromtimestamp(remind_time)
-    async with ps_pool.connection() as conn:
-        await conn.execute("""INSERT INTO
-                     mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
-                     VALUES(%s, %s, %s, %s)""",
-                     (channel_id, message_ts, remind_time, user_mentions_by_id, ))
-        await conn.commit()
+    with pg_pool.connection() as conn:
+        query = """INSERT INTO mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
+                VALUES(%s, %s, %s, %s)"""
+        conn.execute(query, (channel_id, message_ts, remind_time, user_mentions_by_id, ))
+        conn.commit()
 
 
-# listens to reactions, but only does db ops if associated message has mentions
 @app.event("reaction_added")
 async def handle_reactions(payload):
     """Handles reactions for mention messages and boss @channel mentions in #general"""
@@ -240,28 +228,29 @@ async def handle_reactions(payload):
         channel_id = payload['item']['channel']
         message_ts = payload['item']['ts']
         reaction = payload['reaction']
-        # simple mention message
-        if mention_match:
-            logger.debug("reaction detected on mention msg")
-            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-            async with ps_pool.connection() as conn:
-                await conn.execute("""UPDATE mention_message
-                                SET nonresponder_ids = array_remove(nonresponder_ids, %s)
-                                WHERE channel_id = %s and message_ts = %s""", (user_id, channel_id, message_ts))
-                await conn.commit()
         # boss channel mention in #general
-        elif (announcement_match
-              and user_id == config['Dev']['user_id_boss']
-              and channel_id == config['Dev']['channel_id_general']):
+        if (announcement_match
+           and user_id == config['Dev']['user_id_boss']
+           and channel_id == config['Dev']['channel_id_general']):
             logger.debug("reaction detected on announcement msg")
             logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-            async with ps_pool.connection() as conn:
-                await conn.execute("""UPDATE announcement_message
-                                   SET responder_ids = array_append(responder_ids, %s)
-                                   WHERE channel_id = %s and message_ts = %s
-                                   and responder_ids && ARRAY[%s] = false""",
-                                   (user_id, channel_id, message_ts, user_id))
-                await conn.commit()
+            with pg_pool.connection() as conn:
+                query = """UPDATE announcement_message
+                        SET responder_ids = array_append(responder_ids, %s)
+                        WHERE channel_id = %s and message_ts = %s
+                        and responder_ids && ARRAY[%s] = false"""
+                conn.execute(query, (user_id, channel_id, message_ts, user_id))
+                conn.commit()
+        # simple mention message
+        elif mention_match:
+            logger.debug("reaction detected on mention msg")
+            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
+            with pg_pool.connection() as conn:
+                query = """UPDATE mention_message
+                        SET nonresponder_ids = array_remove(nonresponder_ids, %s)
+                        WHERE channel_id = %s and message_ts = %s"""
+                conn.execute(query, (user_id, channel_id, message_ts))
+                conn.commit()
         else:
             logger.debug("Unhandled reaction detected, ignoring reaction.")
             return
@@ -269,18 +258,19 @@ async def handle_reactions(payload):
         logger.error(f"Error fetching message associated with reaction: {err}")
 
 
-async def safe_shutdown(handlers: List[AsyncSocketModeHandler], ps_conn_pool: psycopg_pool.ConnectionPool):
+async def safe_shutdown(handlers: List[AsyncSocketModeHandler],
+                        ps_conn_pool: psycopg_pool.ConnectionPool) -> None:
     logger.debug("Initiating graceful shutdown.")
     await shutdown_handlers(handlers)
     try:
-        ps_conn_pool.close()
+        await ps_conn_pool.close()
     except psycopg_pool.errors as errs:
         logger.error(f"Error closing postgres connection pool connection. {errs}")
     logger.debug("Postgres connection pool closed.")
     logger.debug("Graceful shutdown process ended.")
 
 
-async def shutdown_handlers(handlers: List[AsyncSocketModeHandler]):
+async def shutdown_handlers(handlers: List[AsyncSocketModeHandler]) -> None:
     for handler in handlers:
         await handler.close_async()
         logger.debug(f"{handler} shutting down")
@@ -292,4 +282,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.warning("Keyboard interrupt detected. Attempting to gracefully shutdown.")
-        asyncio.run(safe_shutdown(socket_mode_handlers, ps_pool))
+        asyncio.run(safe_shutdown(socket_mode_handlers, pg_pool))
