@@ -37,7 +37,8 @@ async def main():
     try:
         # event loop is started in if __name__ == "__main__"
         loop = asyncio.get_running_loop()
-        loop.create_task(infinitely_call(check_reminders))
+        loop.create_task(infinitely_call(check_mention_reminders))
+        loop.create_task(infinitely_call(check_announcement_reminders))
     except RuntimeError as e:
         logger.critical(e)
     logger.debug("created check reminder task")
@@ -87,7 +88,7 @@ async def async_filter(async_pred, iterable):
             yield item
 
 
-async def check_reminders(use_delay: bool = True):
+async def check_mention_reminders(use_delay: bool = True):
     """
     Warning: changing default value can cause infinite loop\n
     Args:
@@ -95,7 +96,7 @@ async def check_reminders(use_delay: bool = True):
     """
     seconds_to_sleep: float = (60 * 10 if use_delay else 0)
     await asyncio.sleep(seconds_to_sleep)
-    logger.debug("Starting async reminder function")
+    logger.debug("Starting async mention checking function")
     with ps_pool.connection() as conn:
         conn.execute("""DELETE FROM mention_message
                         WHERE nonresponder_ids = '{}'""")
@@ -110,7 +111,7 @@ async def check_reminders(use_delay: bool = True):
             try:
                 # prevent rate limiting for postMessage
                 asyncio.sleep(1)
-                result = client.chat_postMessage(
+                result = await client.chat_postMessage(
                     channel=channel_id,
                     text=f"{message}\n This is a reminder that a message has not been reacted to in the past 2 days."
                 )
@@ -120,6 +121,44 @@ async def check_reminders(use_delay: bool = True):
             finally:
                 conn.commit()
     logger.debug("Exiting async reminder function")
+
+
+async def check_announcement_reminders():
+    seconds_to_sleep: float = (10)
+    await asyncio.sleep(seconds_to_sleep)
+    logger.debug("Starting async announcement checking function.")
+    with ps_pool.connection() as conn:
+        responder_ids = conn.execute("""DELETE FROM announcement_message
+                                     WHERE NOW() > remind_time
+                                    RETURNING responder_ids""").fetchall()
+    users_store = {}
+
+    def save_non_bot_users(users_array):
+        for user in users_array:
+            # Key user info on their unique user ID
+            if user["is_bot"] is True or user["id"] == 'USLACKBOT':
+                continue
+            user_id = user["id"]
+            # Store the entire user object (you may not need all of the info)
+            users_store[user_id] = user
+    try:
+        result = await client.users_list()
+        save_non_bot_users(result["members"])
+    except SlackApiError as e:
+        logger.error("Error creating conversation: {}".format(e))
+        # Put users into the dict
+
+    nonresponder_ids = [id for id in users_store if id not in responder_ids]
+    for nonresponder_id in nonresponder_ids:
+        await asyncio.sleep(2)
+        try:
+            result = await client.chat_postMessage(
+                channel=nonresponder_id,
+                text="Ayo watup rsvp in general chan pls"
+            )
+            logger.info(result)
+        except SlackApiError as e:
+            logger.error(f"Error posting message: {e}")
 
 
 @app.error
@@ -154,12 +193,6 @@ async def handle_boss_general_channel_mention(message, say):
                     VALUES(%s, %s, %s, %s)"""
         conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
     await say("boss used channel mention in general!")
-    # TODO: Implement channel announcement trackingwith ps
-    # X add channel announcement to database
-    # track people who react on message
-    # after some amount of time, get    list of users who need to respond
-    # get nonresponders by diffing db and people in channel
-    # send nonresponders a dm
 
 
 # tracks channel messages with non-bot user mentions
