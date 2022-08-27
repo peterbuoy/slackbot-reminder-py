@@ -52,37 +52,6 @@ async def infinitely_call(coro_func):
         await coro_func()
 
 
-async def is_valid_non_bot_id(user_id: str) -> bool:
-    """Hits the Slack API with a user id to determine if it valid and non-bot."""
-    try:
-        response = await client.users_info(user=user_id)
-    except SlackApiError as e:
-        logger.warning(f"{e}\n invalid_id: {user_id}")
-        return False
-    username = response['user']['name']
-    is_bot = response['user']['is_bot']
-    logger.debug(f"{username} is a bot? {is_bot}")
-    return True if not is_bot else False
-
-
-async def is_simple_non_bot_channel_message(message) -> bool:
-    """Returns True if the message is just a simple channel message."""
-    # this coincidentally also ignores integration bot messages
-    if 'subtype' in message:
-        logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
-        return False
-    else:
-        logger.debug("Simple channel message: subtype is None")
-        return True
-
-
-async def async_filter(async_pred, iterable):
-    for item in iterable:
-        should_yield = await async_pred(item)
-        if should_yield:
-            yield item
-
-
 async def check_mention_reminders(use_delay: bool = True) -> None:
     """
     Warning: changing default value can cause infinite loop\n
@@ -153,14 +122,28 @@ async def check_announcement_reminders() -> None:
             logger.error(f"Error posting message: {e}")
 
 
-@app.error
-async def handle_errors(error):
-    if isinstance(error, BoltUnhandledRequestError):
-        return BoltResponse(status=200, body="")
+async def is_valid_non_bot_id(user_id: str) -> bool:
+    """Hits the Slack API with a user id to determine if it valid and non-bot."""
+    try:
+        response = await client.users_info(user=user_id)
+    except SlackApiError as e:
+        logger.warning(f"{e}\n invalid_id: {user_id}")
+        return False 
+    username = response['user']['name']
+    is_bot = response['user']['is_bot']
+    logger.debug(f"{username} is a bot? {is_bot}")
+    return False if is_bot else True
+
+
+async def is_simple_non_bot_channel_message(message) -> bool:
+    """Returns True if the message is just a simple channel message."""
+    # this coincidentally also ignores integration bot messages
+    if 'subtype' in message:
+        logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
+        return False
     else:
-        # other error patterns
-        logger.debug(error)
-        return BoltResponse(status=500, body="Something Wrong")
+        logger.debug("Simple channel message: subtype is None")
+        return True
 
 
 async def is_message_in_general(message):
@@ -170,6 +153,23 @@ async def is_message_in_general(message):
 
 async def is_message_author_boss(message):
     return True if message['user'] == config['Dev']['user_id_boss'] else False
+
+
+async def async_filter(async_pred, iterable):
+    for item in iterable:
+        should_yield = await async_pred(item)
+        if should_yield:
+            yield item
+
+
+@app.error
+async def handle_errors(error):
+    if isinstance(error, BoltUnhandledRequestError):
+        return BoltResponse(status=200, body="")
+    else:
+        # other error patterns
+        logger.debug(error)
+        return BoltResponse(status=500, body="Something Wrong")
 
 
 @app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
@@ -272,7 +272,10 @@ async def safe_shutdown(handlers: List[AsyncSocketModeHandler],
 
 async def shutdown_handlers(handlers: List[AsyncSocketModeHandler]) -> None:
     for handler in handlers:
-        await handler.close_async()
+        try:
+            await handler.close_async()
+        except Exception as err:
+            logger.error(f"Error closing async: {err}")
         logger.debug(f"{handler} shutting down")
     logger.debug("Initialized async handlers shut down.")
 
