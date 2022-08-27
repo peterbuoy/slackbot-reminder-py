@@ -142,12 +142,22 @@ async def is_message_author_boss(message):
 
 
 @app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
-async def handle_boss_general_channel_mention(say):
+async def handle_boss_general_channel_mention(message, say):
+    announcement_delay_seconds = 60
+    channel_id = message['channel']
+    message_ts = message['event_ts']
+    responder_ids = [config['Dev']['user_id_boss']]
+    remind_time = int(float(message_ts)) + announcement_delay_seconds
+    remind_time = datetime.utcfromtimestamp(remind_time)
+    with ps_pool.connection() as conn:
+        query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
+                    VALUES(%s, %s, %s, %s)"""
+        conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
     await say("boss used channel mention in general!")
-    # TODO: Implement channel announcement tracking
-    # add channel announcement to database
+    # TODO: Implement channel announcement trackingwith ps
+    # X add channel announcement to database
     # track people who react on message
-    # after some amount of time, get list of users who need to respond
+    # after some amount of time, get    list of users who need to respond
     # get nonresponders by diffing db and people in channel
     # send nonresponders a dm
 
@@ -179,7 +189,8 @@ async def handle_user_mention_message(context, message):
 
 # listens to reactions, but only does db ops if associated message has mentions
 @app.event("reaction_added")
-async def handle_reaction_for_mention_message(payload):
+async def handle_reactions(payload):
+    """Handles reactions for mention messages and boss @channel mentions in #general"""
     # Retrieve message text from data (channel, ts) in reaction payload
     # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
     try:
@@ -190,21 +201,39 @@ async def handle_reaction_for_mention_message(payload):
                                             limit=1
                                         )
         message = result["messages"][0]
-        match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
-        if not match:
-            logger.debug("reaction detected on non-mention msg, ignoring reaction")
+        mention_match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
+        announcement_match = re.search("<!channel>", message['text'])
+        user_id = payload['user']
+        channel_id = payload['item']['channel']
+        message_ts = payload['item']['ts']
+        reaction = payload['reaction']
+        # simple mention message
+        if mention_match:
+            logger.debug("reaction detected on mention msg")
+            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
+            with ps_pool.connection() as conn:
+                conn.execute("""UPDATE mention_message
+                                SET nonresponder_ids = array_remove(nonresponder_ids, %s)
+                                WHERE channel_id = %s and message_ts = %s""", (user_id, channel_id, message_ts))
+                conn.commit()
+        # boss channel mention in #general
+        elif (announcement_match
+              and user_id == config['Dev']['user_id_boss']
+              and channel_id == config['Dev']['channel_id_general']):
+            logger.debug("reaction detected on announcement msg")
+            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
+            with ps_pool.connection() as conn:
+                conn.execute("""UPDATE announcement_message
+                                SET responder_ids = array_append(responder_ids, %s)
+                                WHERE channel_id = %s and message_ts = %s
+                                and responder_ids && ARRAY[%s] = false""",
+                             (user_id, channel_id, message_ts, user_id))
+                conn.commit()
+        else:
+            logger.debug("Unhandled reaction detected, ignoring reaction.")
             return
     except SlackApiError as err:
         logger.error(f"Error fetching message associated with reaction: {err}")
-    user_id = payload['user']
-    channel_id = payload['item']['channel']
-    message_ts = payload['item']['ts']
-    reaction = payload['reaction']
-    logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-    with ps_pool.connection() as conn:
-        conn.execute("""UPDATE mention_message
-                        SET nonresponder_ids = array_remove(nonresponder_ids, %s)""", (user_id, ))
-        conn.commit()
 
 
 async def safe_shutdown(handlers: List[AsyncSocketModeHandler], ps_conn_pool: psycopg_pool.ConnectionPool):
