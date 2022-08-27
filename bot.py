@@ -22,7 +22,7 @@ conn_info = f"""user={os.environ.get("DB_USER")}
                 password={os.environ.get("DB_PASSWORD")}
                 host={os.environ.get("DB_HOST")}
                 port={os.environ.get("DB_PORT")}"""
-ps_pool = psycopg_pool.ConnectionPool(min_size=1, max_size=3, conninfo=conn_info)
+ps_pool = psycopg_pool.AsyncConnectionPool(min_size=1, max_size=3, conninfo=conn_info)
 ps_pool.open()
 logger.info(ps_pool.get_stats())
 
@@ -45,7 +45,7 @@ async def main():
 
     global socket_mode_handlers
     socket_mode_handlers = []
-    handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
+    handler = await AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"], )
     socket_mode_handlers.append(handler)
     logger.debug(f"Successfully created async socket mode handler: {handler}")
     await handler.start_async()
@@ -97,10 +97,10 @@ async def check_mention_reminders(use_delay: bool = True):
     seconds_to_sleep: float = (60 * 10 if use_delay else 0)
     await asyncio.sleep(seconds_to_sleep)
     logger.debug("Starting async mention checking function")
-    with ps_pool.connection() as conn:
-        conn.execute("""DELETE FROM mention_message
+    async with ps_pool.connection() as conn:
+        await conn.execute("""DELETE FROM mention_message
                         WHERE nonresponder_ids = '{}'""")
-        reminder_messages = conn.execute("""DELETE FROM mention_message
+        reminder_messages = await conn.execute("""DELETE FROM mention_message
                                             WHERE NOW() > remind_time
                                             RETURNING *""").fetchall()
         logger.debug(reminder_messages)
@@ -127,8 +127,8 @@ async def check_announcement_reminders():
     seconds_to_sleep: float = (10)
     await asyncio.sleep(seconds_to_sleep)
     logger.debug("Starting async announcement checking function.")
-    with ps_pool.connection() as conn:
-        responder_ids = conn.execute("""DELETE FROM announcement_message
+    async with ps_pool.connection() as conn:
+        responder_ids = await conn.execute("""DELETE FROM announcement_message
                                      WHERE NOW() > remind_time
                                     RETURNING responder_ids""").fetchall()
     users_store = {}
@@ -188,10 +188,10 @@ async def handle_boss_general_channel_mention(message, say):
     responder_ids = [config['Dev']['user_id_boss']]
     remind_time = int(float(message_ts)) + announcement_delay_seconds
     remind_time = datetime.utcfromtimestamp(remind_time)
-    with ps_pool.connection() as conn:
+    async with ps_pool.connection() as conn:
         query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
                     VALUES(%s, %s, %s, %s)"""
-        conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
+        await conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
     await say("boss used channel mention in general!")
 
 
@@ -212,12 +212,12 @@ async def handle_user_mention_message(context, message):
     logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
     remind_time = int(float(message_ts)) + two_days_in_unix_seconds
     remind_time = datetime.utcfromtimestamp(remind_time)
-    with ps_pool.connection() as conn:
-        conn.execute("""INSERT INTO
+    async with ps_pool.connection() as conn:
+        await conn.execute("""INSERT INTO
                      mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
                      VALUES(%s, %s, %s, %s)""",
                      (channel_id, message_ts, remind_time, user_mentions_by_id, ))
-        conn.commit()
+        await conn.commit()
 
 
 # listens to reactions, but only does db ops if associated message has mentions
@@ -244,24 +244,24 @@ async def handle_reactions(payload):
         if mention_match:
             logger.debug("reaction detected on mention msg")
             logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-            with ps_pool.connection() as conn:
-                conn.execute("""UPDATE mention_message
+            async with ps_pool.connection() as conn:
+                await conn.execute("""UPDATE mention_message
                                 SET nonresponder_ids = array_remove(nonresponder_ids, %s)
                                 WHERE channel_id = %s and message_ts = %s""", (user_id, channel_id, message_ts))
-                conn.commit()
+                await conn.commit()
         # boss channel mention in #general
         elif (announcement_match
               and user_id == config['Dev']['user_id_boss']
               and channel_id == config['Dev']['channel_id_general']):
             logger.debug("reaction detected on announcement msg")
             logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-            with ps_pool.connection() as conn:
-                conn.execute("""UPDATE announcement_message
-                                SET responder_ids = array_append(responder_ids, %s)
-                                WHERE channel_id = %s and message_ts = %s
-                                and responder_ids && ARRAY[%s] = false""",
-                             (user_id, channel_id, message_ts, user_id))
-                conn.commit()
+            async with ps_pool.connection() as conn:
+                await conn.execute("""UPDATE announcement_message
+                                   SET responder_ids = array_append(responder_ids, %s)
+                                   WHERE channel_id = %s and message_ts = %s
+                                   and responder_ids && ARRAY[%s] = false""",
+                                   (user_id, channel_id, message_ts, user_id))
+                await conn.commit()
         else:
             logger.debug("Unhandled reaction detected, ignoring reaction.")
             return
