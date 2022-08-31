@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import asyncio
 import psycopg_pool
@@ -16,7 +17,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 config = configparser.ConfigParser()
-config.read('app_config.ini')
+env = os.environ.get("ENV")
+if env is None:
+    logger.warning('Please specify if the environment variable ENV is "prod" or "dev"')
+    sys.exit()
+if env.lower() == "dev":
+    config.read('app_config.dev.ini')
+    logger.info(f"ENV environment variable set to {env.lower()}")
+elif env.lower() == "prod":
+    config.read('app_config.prod.ini')
+    logger.info(f"ENV environment variable set to {env.lower()}")
+else:
+    logger.warning('Please specify if the environment variable ENV is "prod" or "dev"')
+    sys.exit()
+
+feature_flags = config.items('feature_flags')
+logger.info("Listing feature flags below:")
+for name, value in feature_flags:
+    logger.info(f"{name}: {value}")
+
 conn_info = f"""user={os.environ.get("DB_USER")}
                 dbname={os.environ.get("DB_NAME")}
                 password={os.environ.get("DB_PASSWORD")}
@@ -58,7 +77,7 @@ async def check_mention_reminders(use_delay: bool = True) -> None:
     Args:
         use_delay (bool): set to False to immediately call (without sleep)
     """
-    seconds_to_sleep: float = (60 * 10 if use_delay else 0)
+    seconds_to_sleep: float = (60 * 15 if use_delay else 0)
     await asyncio.sleep(seconds_to_sleep)
     logger.debug("Starting async mention checking function")
     with pg_pool.connection() as conn:
@@ -148,11 +167,11 @@ async def is_simple_non_bot_channel_message(message) -> bool:
 
 async def is_message_in_general(message):
     # pls set this with a config
-    return True if message['channel'] == config['Dev']['channel_id_general'] else False
+    return True if message['channel'] == config['id']['channel_id_general'] else False
 
 
 async def is_message_author_boss(message):
-    return True if message['user'] == config['Dev']['user_id_boss'] else False
+    return True if message['user'] == config['id']['user_id_boss'] else False
 
 
 async def async_filter(async_pred, iterable):
@@ -171,42 +190,42 @@ async def handle_errors(error):
         logger.debug(error)
         return BoltResponse(status=500, body="Something Wrong")
 
+if (config['feature_flags'].getboolean('boss_announcement') is True):
+    @app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
+    async def handle_boss_announcement(message):
+        announcement_delay_seconds = 60
+        channel_id = message['channel']
+        message_ts = message['event_ts']
+        responder_ids = [config['id']['user_id_boss']]
+        remind_time = int(float(message_ts)) + announcement_delay_seconds
+        remind_time = datetime.utcfromtimestamp(remind_time)
+        with pg_pool.connection() as conn:
+            query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
+                    VALUES(%s, %s, %s, %s)"""
+            conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
+        logger.debug("detected boss using channel mention in general")
 
-@app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
-async def handle_boss_general_channel_mention(message, say):
-    announcement_delay_seconds = 60
-    channel_id = message['channel']
-    message_ts = message['event_ts']
-    responder_ids = [config['Dev']['user_id_boss']]
-    remind_time = int(float(message_ts)) + announcement_delay_seconds
-    remind_time = datetime.utcfromtimestamp(remind_time)
-    with pg_pool.connection() as conn:
-        query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
-                VALUES(%s, %s, %s, %s)"""
-        conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
-    await say("boss used channel mention in general!")
-
-
-# tracks channel messages with non-bot user mentions
-@app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[is_simple_non_bot_channel_message])
-async def handle_user_mention_message(context, message):
-    # context['matches'] is a tuple with captured User IDs via regex
-    raw_mentions_by_id = set(context['matches'])
-    logger.debug(f"All mentioned users: {raw_mentions_by_id}")
-    # Remove bot mentions. Return list so psycopg can adapt it to a postgres array value
-    user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
-    logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
-    channel_id = message['channel']
-    message_ts = message['event_ts']
-    two_days_in_unix_seconds = 3600 * 24 * 2
-    logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
-    remind_time = int(float(message_ts)) + two_days_in_unix_seconds
-    remind_time = datetime.utcfromtimestamp(remind_time)
-    with pg_pool.connection() as conn:
-        query = """INSERT INTO mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
-                VALUES(%s, %s, %s, %s)"""
-        conn.execute(query, (channel_id, message_ts, remind_time, user_mentions_by_id, ))
-        conn.commit()
+if (config['feature_flags'].getboolean('user_mention') is True):
+    # tracks channel messages with non-bot user mentions
+    @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[is_simple_non_bot_channel_message])
+    async def handle_user_mention_message(context, message):
+        # context['matches'] is a tuple with captured User IDs via regex
+        raw_mentions_by_id = set(context['matches'])
+        logger.debug(f"All mentioned users: {raw_mentions_by_id}")
+        # Remove bot mentions. Return list so psycopg can adapt it to a postgres array value
+        user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
+        logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
+        channel_id = message['channel']
+        message_ts = message['event_ts']
+        two_days_in_unix_seconds = 3600 * 24 * 2
+        logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
+        remind_time = int(float(message_ts)) + two_days_in_unix_seconds
+        remind_time = datetime.utcfromtimestamp(remind_time)
+        with pg_pool.connection() as conn:
+            query = """INSERT INTO mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
+                    VALUES(%s, %s, %s, %s)"""
+            conn.execute(query, (channel_id, message_ts, remind_time, user_mentions_by_id, ))
+            conn.commit()
 
 
 @app.event("reaction_added")
@@ -230,8 +249,8 @@ async def handle_reactions(payload):
         reaction = payload['reaction']
         # boss channel mention in #general
         if (announcement_match
-           and user_id == config['Dev']['user_id_boss']
-           and channel_id == config['Dev']['channel_id_general']):
+           and user_id == config['id']['user_id_boss']
+           and channel_id == config['id']['channel_id_general']):
             logger.debug("reaction detected on announcement msg")
             logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
             with pg_pool.connection() as conn:
@@ -262,10 +281,7 @@ async def safe_shutdown(handlers: List[AsyncSocketModeHandler],
                         ps_conn_pool: psycopg_pool.ConnectionPool) -> None:
     logger.debug("Initiating graceful shutdown.")
     await shutdown_handlers(handlers)
-    try:
-        await ps_conn_pool.close()
-    except psycopg_pool.errors as errs:
-        logger.error(f"Error closing postgres connection pool connection. {errs}")
+    ps_conn_pool.close()
     logger.debug("Postgres connection pool closed.")
     logger.debug("Graceful shutdown process ended.")
 
