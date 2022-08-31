@@ -71,14 +71,7 @@ async def infinitely_call(coro_func):
         await coro_func()
 
 
-async def check_mention_reminders(use_delay: bool = True) -> None:
-    """
-    Warning: changing default value can cause infinite loop\n
-    Args:
-        use_delay (bool): set to False to immediately call (without sleep)
-    """
-    seconds_to_sleep: float = (60 * 15 if use_delay else 0)
-    await asyncio.sleep(seconds_to_sleep)
+async def check_mention_reminders() -> None:
     logger.debug("Starting async mention checking function")
     with pg_pool.connection() as conn:
         conn.execute("""DELETE FROM mention_message
@@ -104,41 +97,47 @@ async def check_mention_reminders(use_delay: bool = True) -> None:
             finally:
                 conn.commit()
     logger.debug("Exiting async reminder function")
+    seconds_to_sleep: float = 60 * 15
+    await asyncio.sleep(seconds_to_sleep)
 
 
 async def check_announcement_reminders() -> None:
-    seconds_to_sleep: float = 60 * 20
-    await asyncio.sleep(seconds_to_sleep)
+    await asyncio.sleep(2)
     logger.debug("Starting async announcement checking function.")
     with pg_pool.connection() as conn:
         query = """DELETE FROM announcement_message
                 WHERE NOW() > remind_time
                 RETURNING responder_ids"""
-        responder_ids = conn.execute(query)
-
-    def save_non_bot_users(users_array) -> dict:
-        users_store = {}
-        for user in users_array:
-            if user["is_bot"] is True or user["id"] == 'USLACKBOT':
-                continue
-            user_id = user["id"]
-            users_store[user_id] = user
-        return users_store
-    try:
-        result = await client.users_list()
-        non_bot_users_store = save_non_bot_users(result["members"])
-    except SlackApiError as e:
-        logger.error("Error creating conversation: {}".format(e))
-    nonresponder_ids = [id for id in non_bot_users_store if id not in responder_ids]
-    for nonresponder_id in nonresponder_ids:
-        await asyncio.sleep(2)
+        responder_ids = conn.execute(query).fetchall()
+    for responder_id in responder_ids:
+        responder_id_actual = responder_id[0]
         try:
-            result = await client.chat_postMessage(
-                channel=nonresponder_id,
-                text="Please remember to react to announcements in general."
-            )
+            result = await client.users_list()
+            non_bot_users_store = save_non_bot_users(result["members"])
         except SlackApiError as e:
-            logger.error(f"Error posting message: {e}")
+            logger.error("Error creating conversation: {}".format(e))
+        nonresponder_ids = [id for id in non_bot_users_store if id not in responder_id_actual]
+        for nonresponder_id in nonresponder_ids:
+            await asyncio.sleep(2)
+            try:
+                result = await client.chat_postMessage(
+                    channel=nonresponder_id,
+                    text="Please remember to react to announcements in general."
+                )
+            except SlackApiError as e:
+                logger.error(f"Error posting message: {e}")
+    seconds_to_sleep: float = 60 * 20
+    await asyncio.sleep(seconds_to_sleep)
+
+
+def save_non_bot_users(users_array) -> dict:
+    users_store = {}
+    for user in users_array:
+        if user["is_bot"] is True or user["id"] == 'USLACKBOT':
+            continue
+        user_id = user["id"]
+        users_store[user_id] = user
+    return users_store
 
 
 async def is_valid_non_bot_id(user_id: str) -> bool:
@@ -147,7 +146,7 @@ async def is_valid_non_bot_id(user_id: str) -> bool:
         response = await client.users_info(user=user_id)
     except SlackApiError as e:
         logger.warning(f"{e}\n invalid_id: {user_id}")
-        return False 
+        return False
     username = response['user']['name']
     is_bot = response['user']['is_bot']
     logger.debug(f"{username} is a bot? {is_bot}")
@@ -193,11 +192,11 @@ async def handle_errors(error):
 if (config['feature_flags'].getboolean('boss_announcement') is True):
     @app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
     async def handle_boss_announcement(message):
-        announcement_delay_seconds = 60
+        required_response_time_seconds = int(config['required_response_time_seconds']['boss_announcement'])
         channel_id = message['channel']
         message_ts = message['event_ts']
         responder_ids = [config['id']['user_id_boss']]
-        remind_time = int(float(message_ts)) + announcement_delay_seconds
+        remind_time = int(float(message_ts)) + required_response_time_seconds
         remind_time = datetime.utcfromtimestamp(remind_time)
         with pg_pool.connection() as conn:
             query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
@@ -217,9 +216,9 @@ if (config['feature_flags'].getboolean('user_mention') is True):
         logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
         channel_id = message['channel']
         message_ts = message['event_ts']
-        two_days_in_unix_seconds = 3600 * 24 * 2
+        required_response_time_seconds = int(config['required_response_time_seconds']['user_mention'])
         logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
-        remind_time = int(float(message_ts)) + two_days_in_unix_seconds
+        remind_time = int(float(message_ts)) + required_response_time_seconds
         remind_time = datetime.utcfromtimestamp(remind_time)
         with pg_pool.connection() as conn:
             query = """INSERT INTO mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
