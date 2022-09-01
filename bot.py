@@ -76,17 +76,18 @@ async def check_mention_reminders() -> None:
     with pg_pool.connection() as conn:
         conn.execute("""DELETE FROM mention_message
                         WHERE nonresponder_ids = '{}'""")
-        reminder_messages = conn.execute("""DELETE FROM mention_message
-                                            WHERE NOW() > remind_time
-                                            RETURNING *""").fetchall()
+        query = """DELETE FROM mention_message
+                WHERE NOW() > remind_time
+                RETURNING channel_id, nonresponder_ids"""
+        reminder_messages = conn.execute(query).fetchall()
         logger.debug(reminder_messages)
         for reminder in reminder_messages:
             channel_id = reminder[0]
-            nonresponder_ids = reminder[3]
+            nonresponder_ids = reminder[1]
             message = ' '.join([f"<@{id}>" for id in nonresponder_ids])
             try:
                 # prevent rate limiting for postMessage
-                asyncio.sleep(1)
+                await asyncio.sleep(1)
                 result = await client.chat_postMessage(
                     channel=channel_id,
                     text=f"{message}\n This is a reminder that a message has not been reacted to in the past 2 days."
@@ -96,7 +97,8 @@ async def check_mention_reminders() -> None:
                 logger.error(f"Error posting message: {err}")
             finally:
                 conn.commit()
-    logger.debug("Exiting async reminder function")
+        conn.commit()
+    logger.debug("Exiting async mention function")
     seconds_to_sleep: float = 60 * 15
     await asyncio.sleep(seconds_to_sleep)
 
@@ -127,6 +129,7 @@ async def check_announcement_reminders() -> None:
             except SlackApiError as e:
                 logger.error(f"Error posting message: {e}")
     seconds_to_sleep: float = 60 * 20
+    logger.debug("Exiting async announcement checking function.")
     await asyncio.sleep(seconds_to_sleep)
 
 
@@ -217,7 +220,7 @@ if (config['feature_flags'].getboolean('user_mention') is True):
         channel_id = message['channel']
         message_ts = message['event_ts']
         required_response_time_seconds = int(config['required_response_time_seconds']['user_mention'])
-        logger.debug(f"{channel_id} {message_ts} {user_mentions_by_id}")
+        logger.debug(f"DB Insert: {channel_id} {message_ts} {user_mentions_by_id}")
         remind_time = int(float(message_ts)) + required_response_time_seconds
         remind_time = datetime.utcfromtimestamp(remind_time)
         with pg_pool.connection() as conn:
