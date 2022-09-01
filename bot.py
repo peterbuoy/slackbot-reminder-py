@@ -4,6 +4,7 @@ import re
 import asyncio
 import psycopg_pool
 import configparser
+import middleware
 from loguru import logger
 from datetime import datetime
 from typing import List
@@ -63,6 +64,128 @@ async def main():
         await handler.start_async()
     except RuntimeError as e:
         logger.critical(e)
+
+
+def save_non_bot_users(users_array) -> dict:
+    """Takes an array of user json objects via await client.users_list()"""
+    users_store = {}
+    for user in users_array:
+        if user["is_bot"] is True or user["id"] == 'USLACKBOT':
+            continue
+        user_id = user["id"]
+        users_store[user_id] = user
+    return users_store
+
+
+async def is_valid_non_bot_id(user_id: str) -> bool:
+    """Hits the Slack API with a user id to determine if it valid and non-bot."""
+    try:
+        response = await client.users_info(user=user_id)
+    except SlackApiError as e:
+        logger.warning(f"{e}\n invalid_id: {user_id}")
+        return False
+    username = response['user']['name']
+    is_bot = response['user']['is_bot']
+    logger.debug(f"{username} is a bot? {is_bot}")
+    return False if is_bot else True
+
+
+async def async_filter(async_pred, iterable):
+    for item in iterable:
+        should_yield = await async_pred(item)
+        if should_yield:
+            yield item
+
+
+if (config['feature_flags'].getboolean('boss_announcement') is True):
+    @app.message("<!channel>",
+                 middleware=[middleware.only_boss_message,
+                             middleware.only_general_channel_message,
+                             middleware.only_simple_non_bot_channel_message])
+    async def handle_boss_announcement(message):
+        required_response_time_seconds = int(config['required_response_time_seconds']['boss_announcement'])
+        channel_id = message['channel']
+        message_ts = message['event_ts']
+        responder_ids = [config['id']['user_id_boss']]
+        remind_time = int(float(message_ts)) + required_response_time_seconds
+        remind_time = datetime.utcfromtimestamp(remind_time)
+        with pg_pool.connection() as conn:
+            query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
+                    VALUES(%s, %s, %s, %s)"""
+            conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
+        logger.debug("detected boss using channel mention in general")
+
+
+if (config['feature_flags'].getboolean('user_mention') is True):
+    @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'),
+                 middleware=[middleware.only_simple_non_bot_channel_message])
+    async def handle_user_mention_message(context, message):
+        # context['matches'] is a tuple with captured User IDs via regex
+        raw_mentions_by_id = set(context['matches'])
+        logger.debug(f"All mentioned users: {raw_mentions_by_id}")
+        # Remove bot mentions. Return list so psycopg can adapt it to a postgres array value
+        user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
+        logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
+        channel_id = message['channel']
+        message_ts = message['event_ts']
+        required_response_time_seconds = int(config['required_response_time_seconds']['user_mention'])
+        logger.debug(f"DB Insert: {channel_id} {message_ts} {user_mentions_by_id}")
+        remind_time = int(float(message_ts)) + required_response_time_seconds
+        remind_time = datetime.utcfromtimestamp(remind_time)
+        with pg_pool.connection() as conn:
+            query = """INSERT INTO mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
+                    VALUES(%s, %s, %s, %s)"""
+            conn.execute(query, (channel_id, message_ts, remind_time, user_mentions_by_id, ))
+            conn.commit()
+
+
+@app.event("reaction_added")
+async def handle_reactions(payload):
+    """Handles reactions for mention messages and boss @channel mentions in #general"""
+    # Retrieve message text from data (channel, ts) in reaction payload
+    # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
+    try:
+        result = await client.conversations_history(
+                                            channel=payload['item']['channel'],
+                                            inclusive=True,
+                                            oldest=payload['item']['ts'],
+                                            limit=1
+                                        )
+        message = result["messages"][0]
+        mention_match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
+        announcement_match = re.search("<!channel>", message['text'])
+        user_id = payload['user']
+        channel_id = payload['item']['channel']
+        message_ts = payload['item']['ts']
+        reaction = payload['reaction']
+        # boss channel mention in #general
+        if (announcement_match
+           and user_id == config['id']['user_id_boss']
+           and channel_id == config['id']['channel_id_general']):
+            logger.debug("reaction detected on announcement msg")
+            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
+            with pg_pool.connection() as conn:
+                query = """UPDATE announcement_message
+                        SET responder_ids = array_append(responder_ids, %s)
+                        WHERE channel_id = %s and message_ts = %s
+                        and responder_ids && ARRAY[%s] = false"""
+                conn.execute(query, (user_id, channel_id, message_ts, user_id))
+                conn.commit()
+        # simple mention message
+        elif mention_match:
+            logger.debug("reaction detected on mention msg")
+            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
+            with pg_pool.connection() as conn:
+                query = """UPDATE mention_message
+                        SET nonresponder_ids = array_remove(nonresponder_ids, %s)
+                        WHERE channel_id = %s and message_ts = %s"""
+                conn.execute(query, (user_id, channel_id, message_ts))
+                conn.commit()
+        else:
+            logger.debug("Unhandled reaction detected, ignoring reaction.")
+            return
+    except SlackApiError as err:
+        logger.error(f"Error fetching message associated with reaction: {err}")
 
 
 async def infinitely_call(coro_func):
@@ -133,56 +256,6 @@ async def check_announcement_reminders() -> None:
     await asyncio.sleep(seconds_to_sleep)
 
 
-def save_non_bot_users(users_array) -> dict:
-    users_store = {}
-    for user in users_array:
-        if user["is_bot"] is True or user["id"] == 'USLACKBOT':
-            continue
-        user_id = user["id"]
-        users_store[user_id] = user
-    return users_store
-
-
-async def is_valid_non_bot_id(user_id: str) -> bool:
-    """Hits the Slack API with a user id to determine if it valid and non-bot."""
-    try:
-        response = await client.users_info(user=user_id)
-    except SlackApiError as e:
-        logger.warning(f"{e}\n invalid_id: {user_id}")
-        return False
-    username = response['user']['name']
-    is_bot = response['user']['is_bot']
-    logger.debug(f"{username} is a bot? {is_bot}")
-    return False if is_bot else True
-
-
-async def is_simple_non_bot_channel_message(message) -> bool:
-    """Returns True if the message is just a simple channel message."""
-    # this coincidentally also ignores integration bot messages
-    if 'subtype' in message:
-        logger.debug(f"Not a simple channel message. Subtype is {message['subtype']}")
-        return False
-    else:
-        logger.debug("Simple channel message: subtype is None")
-        return True
-
-
-async def is_message_in_general(message):
-    # pls set this with a config
-    return True if message['channel'] == config['id']['channel_id_general'] else False
-
-
-async def is_message_author_boss(message):
-    return True if message['user'] == config['id']['user_id_boss'] else False
-
-
-async def async_filter(async_pred, iterable):
-    for item in iterable:
-        should_yield = await async_pred(item)
-        if should_yield:
-            yield item
-
-
 @app.error
 async def handle_errors(error):
     if isinstance(error, BoltUnhandledRequestError):
@@ -191,92 +264,6 @@ async def handle_errors(error):
         # other error patterns
         logger.debug(error)
         return BoltResponse(status=500, body="Something Wrong")
-
-if (config['feature_flags'].getboolean('boss_announcement') is True):
-    @app.message("<!channel>", matchers=[is_message_in_general, is_message_author_boss])
-    async def handle_boss_announcement(message):
-        required_response_time_seconds = int(config['required_response_time_seconds']['boss_announcement'])
-        channel_id = message['channel']
-        message_ts = message['event_ts']
-        responder_ids = [config['id']['user_id_boss']]
-        remind_time = int(float(message_ts)) + required_response_time_seconds
-        remind_time = datetime.utcfromtimestamp(remind_time)
-        with pg_pool.connection() as conn:
-            query = """INSERT INTO announcement_message(channel_id, message_ts, remind_time, responder_ids)
-                    VALUES(%s, %s, %s, %s)"""
-            conn.execute(query, (channel_id, message_ts, remind_time, responder_ids, ))
-        logger.debug("detected boss using channel mention in general")
-
-if (config['feature_flags'].getboolean('user_mention') is True):
-    # tracks channel messages with non-bot user mentions
-    @app.message(re.compile('<@([UW][A-Za-z0-9]+)>'), matchers=[is_simple_non_bot_channel_message])
-    async def handle_user_mention_message(context, message):
-        # context['matches'] is a tuple with captured User IDs via regex
-        raw_mentions_by_id = set(context['matches'])
-        logger.debug(f"All mentioned users: {raw_mentions_by_id}")
-        # Remove bot mentions. Return list so psycopg can adapt it to a postgres array value
-        user_mentions_by_id = [i async for i in async_filter(is_valid_non_bot_id, raw_mentions_by_id)]
-        logger.opt(colors=True).debug(f"Mentioned <red>human</red> users: {user_mentions_by_id}")
-        channel_id = message['channel']
-        message_ts = message['event_ts']
-        required_response_time_seconds = int(config['required_response_time_seconds']['user_mention'])
-        logger.debug(f"DB Insert: {channel_id} {message_ts} {user_mentions_by_id}")
-        remind_time = int(float(message_ts)) + required_response_time_seconds
-        remind_time = datetime.utcfromtimestamp(remind_time)
-        with pg_pool.connection() as conn:
-            query = """INSERT INTO mention_message(channel_id, message_ts, remind_time, nonresponder_ids)
-                    VALUES(%s, %s, %s, %s)"""
-            conn.execute(query, (channel_id, message_ts, remind_time, user_mentions_by_id, ))
-            conn.commit()
-
-
-@app.event("reaction_added")
-async def handle_reactions(payload):
-    """Handles reactions for mention messages and boss @channel mentions in #general"""
-    # Retrieve message text from data (channel, ts) in reaction payload
-    # CONVO--inclusive: oldest ts counted, oldest: only count ts after arg
-    try:
-        result = await client.conversations_history(
-                                            channel=payload['item']['channel'],
-                                            inclusive=True,
-                                            oldest=payload['item']['ts'],
-                                            limit=1
-                                        )
-        message = result["messages"][0]
-        mention_match = re.search(r"<@([UW][A-Za-z0-9]+)>", message['text'])
-        announcement_match = re.search("<!channel>", message['text'])
-        user_id = payload['user']
-        channel_id = payload['item']['channel']
-        message_ts = payload['item']['ts']
-        reaction = payload['reaction']
-        # boss channel mention in #general
-        if (announcement_match
-           and user_id == config['id']['user_id_boss']
-           and channel_id == config['id']['channel_id_general']):
-            logger.debug("reaction detected on announcement msg")
-            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-            with pg_pool.connection() as conn:
-                query = """UPDATE announcement_message
-                        SET responder_ids = array_append(responder_ids, %s)
-                        WHERE channel_id = %s and message_ts = %s
-                        and responder_ids && ARRAY[%s] = false"""
-                conn.execute(query, (user_id, channel_id, message_ts, user_id))
-                conn.commit()
-        # simple mention message
-        elif mention_match:
-            logger.debug("reaction detected on mention msg")
-            logger.debug(f"Valid reaction: user-{user_id} rxn-{reaction} chan_id-{channel_id} ts-{message_ts}")
-            with pg_pool.connection() as conn:
-                query = """UPDATE mention_message
-                        SET nonresponder_ids = array_remove(nonresponder_ids, %s)
-                        WHERE channel_id = %s and message_ts = %s"""
-                conn.execute(query, (user_id, channel_id, message_ts))
-                conn.commit()
-        else:
-            logger.debug("Unhandled reaction detected, ignoring reaction.")
-            return
-    except SlackApiError as err:
-        logger.error(f"Error fetching message associated with reaction: {err}")
 
 
 async def safe_shutdown(handlers: List[AsyncSocketModeHandler],
