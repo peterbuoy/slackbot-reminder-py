@@ -222,7 +222,7 @@ async def check_mention_reminders() -> None:
                 conn.commit()
         conn.commit()
     logger.debug("Exiting async mention function")
-    seconds_to_sleep: float = 60 * 15
+    seconds_to_sleep: float = float(config['reminder_interval_in_seconds']['user_mention'])
     await asyncio.sleep(seconds_to_sleep)
 
 
@@ -251,7 +251,7 @@ async def check_announcement_reminders() -> None:
                 )
             except SlackApiError as e:
                 logger.error(f"Error posting message: {e}")
-    seconds_to_sleep: float = 60 * 20
+    seconds_to_sleep: float = float(config['reminder_interval_in_seconds']['boss_announcement'])
     logger.debug("Exiting async announcement checking function.")
     await asyncio.sleep(seconds_to_sleep)
 
