@@ -247,10 +247,10 @@ async def check_announcement_reminders() -> None:
         for nonresponder_id in nonresponder_ids:
             await asyncio.sleep(2)
             try:
+                permalink = (await client.chat_getPermalink(channel=channel_id, message_ts=message_ts))['permalink']
                 result = await client.chat_postMessage(
                     channel=nonresponder_id,
-                    text=f"""Please remember to react to announcements in general. \n
-                           {await client.chat_getPermalink(channel=channel_id,message_ts=message_ts)['permalink']}"""
+                    text=f"Please remember to react to announcements in general. \n{permalink}"
                 )
             except SlackApiError as e:
                 logger.error(f"Error posting message: {e}")
