@@ -232,10 +232,12 @@ async def check_announcement_reminders() -> None:
     with pg_pool.connection() as conn:
         query = """DELETE FROM announcement_message
                 WHERE NOW() > remind_time
-                RETURNING responder_ids"""
-        responder_ids = conn.execute(query).fetchall()
-    for responder_id in responder_ids:
-        responder_id_actual = responder_id[0]
+                RETURNING responder_ids, channel_id, message_ts"""
+        returned_announcement_messages = conn.execute(query).fetchall()
+    for announcement_message in returned_announcement_messages:
+        responder_id_actual = announcement_message[0]
+        channel_id = announcement_message[1]
+        message_ts = announcement_message[2]
         try:
             result = await client.users_list()
             non_bot_users_store = save_non_bot_users(result["members"])
@@ -247,7 +249,8 @@ async def check_announcement_reminders() -> None:
             try:
                 result = await client.chat_postMessage(
                     channel=nonresponder_id,
-                    text="Please remember to react to announcements in general."
+                    text=f"""Please remember to react to announcements in general.
+                           {client.chat_getPermalink(channel=channel_id,message_ts=message_ts)}"""
                 )
             except SlackApiError as e:
                 logger.error(f"Error posting message: {e}")
