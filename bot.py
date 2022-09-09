@@ -249,8 +249,8 @@ async def check_announcement_reminders() -> None:
             try:
                 result = await client.chat_postMessage(
                     channel=nonresponder_id,
-                    text=f"""Please remember to react to announcements in general.
-                           {client.chat_getPermalink(channel=channel_id,message_ts=message_ts)}"""
+                    text=f"""Please remember to react to announcements in general. \n
+                           {await client.chat_getPermalink(channel=channel_id,message_ts=message_ts)}"""
                 )
             except SlackApiError as e:
                 logger.error(f"Error posting message: {e}")
